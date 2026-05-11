@@ -1,148 +1,392 @@
 import 'package:flutter/material.dart';
 
-import '../controllers/app_controller.dart';
-import '../data/mock_data.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_page_route.dart';
-import '../widgets/common_widgets.dart';
 import 'login_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
 
+  static const _profileName = 'Karthik Murugan';
+  static const _companyName = 'Sri Murugan Textiles';
+  static const _phoneNumber = '+91 98765 43210';
+
   void _showComingSoon(BuildContext context, String title) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return Container(
-          padding: const EdgeInsets.all(20),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(title, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
-              const SizedBox(height: 8),
-              Text('This area is mocked for now.', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: FreightFairColors.secondaryText)),
-              const SizedBox(height: 16),
-              PrimaryButton(label: 'Close', onPressed: () => Navigator.of(context).pop()),
-            ],
-          ),
-        );
-      },
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$title coming soon')));
+  }
+
+  void _logout(BuildContext context) {
+    Navigator.of(context).pushAndRemoveUntil(
+      AppPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final controller = FreightFairScope.of(context);
-
     return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [FreightFairColors.accent, FreightFairColors.accentDark],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+              decoration: const BoxDecoration(
+                color: FreightFairColors.accent,
               ),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 64,
-                      height: 64,
-                      decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.14), shape: BoxShape.circle),
-                      child: const Center(child: Text(mockInitials, style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800))),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 3),
                     ),
-                    const Spacer(),
-                    OutlinedButton(
-                      onPressed: () => _showComingSoon(context, 'Edit Profile'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: const BorderSide(color: Colors.white70),
-                        minimumSize: const Size(0, 42),
+                    alignment: Alignment.center,
+                    child: const Text(
+                      'KM',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w500,
+                        color: FreightFairColors.accent,
                       ),
-                      child: const Text('Edit Profile'),
                     ),
-                  ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _profileName,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w500,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _companyName,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Colors.white.withValues(alpha: 0.75),
+                          fontSize: 13,
+                        ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _phoneNumber,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.white.withValues(alpha: 0.6),
+                          fontSize: 12,
+                        ),
+                  ),
+                  const SizedBox(height: 14),
+                  OutlinedButton.icon(
+                    onPressed: () => _showComingSoon(context, 'Edit Profile'),
+                    icon: const Icon(Icons.edit_rounded, size: 16),
+                    label: const Text('Edit Profile'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: BorderSide(color: Colors.white.withValues(alpha: 0.4)),
+                      backgroundColor: Colors.white.withValues(alpha: 0.15),
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+                      minimumSize: const Size(0, 0),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      textStyle: Theme.of(context).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w500, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Transform.translate(
+              offset: const Offset(0, -18),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: _StatsCard(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            _SectionLabel(text: 'Account', padding: const EdgeInsets.symmetric(horizontal: 16)),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _MenuCard(
+                children: [
+                  _MenuItem(
+                    icon: Icons.credit_card_rounded,
+                    label: 'Payment Methods',
+                    onTap: () => _showComingSoon(context, 'Payment Methods'),
+                  ),
+                  _MenuItem(
+                    icon: Icons.description_rounded,
+                    label: 'My Documents',
+                    onTap: () => _showComingSoon(context, 'My Documents'),
+                  ),
+                  _MenuItem(
+                    icon: Icons.location_on_rounded,
+                    label: 'Saved Addresses',
+                    showDivider: false,
+                    onTap: () => _showComingSoon(context, 'Saved Addresses'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            _SectionLabel(text: 'Preferences', padding: const EdgeInsets.symmetric(horizontal: 16)),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _MenuCard(
+                children: [
+                  _MenuItem(
+                    icon: Icons.language_rounded,
+                    label: 'Language',
+                    trailing: 'English',
+                    onTap: () => _showComingSoon(context, 'Language'),
+                  ),
+                  _MenuItem(
+                    icon: Icons.help_outline_rounded,
+                    label: 'Help & Support',
+                    onTap: () => _showComingSoon(context, 'Help & Support'),
+                  ),
+                  _MenuItem(
+                    icon: Icons.info_outline_rounded,
+                    label: 'About Truxify',
+                    showDivider: false,
+                    onTap: () => _showComingSoon(context, 'About Truxify'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _MenuCard(
+                children: [
+                  _MenuItem(
+                    icon: Icons.logout_rounded,
+                    label: 'Logout',
+                    iconBackgroundColor: const Color(0xFFFCEBEB),
+                    iconColor: FreightFairColors.error,
+                    textColor: FreightFairColors.error,
+                    showChevron: false,
+                    showDivider: false,
+                    onTap: () => _logout(context),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel({required this.text, this.padding = EdgeInsets.zero});
+
+  final String text;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: padding,
+      child: Text(
+        text.toUpperCase(),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: FreightFairColors.secondaryText,
+              fontSize: 11,
+              letterSpacing: 0.06 * 11,
+              fontWeight: FontWeight.w500,
+            ),
+      ),
+    );
+  }
+}
+
+class _StatsCard extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: const [
+          BoxShadow(color: Color(0x14000000), blurRadius: 8, offset: Offset(0, 2)),
+        ],
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      child: Row(
+        children: const [
+          Expanded(
+            child: _StatColumn(
+              value: '28',
+              label: 'Orders',
+              valueSize: 20,
+              addRightDivider: true,
+            ),
+          ),
+          Expanded(
+            child: _StatColumn(
+              value: '₹42.8k',
+              label: 'Saved',
+              valueSize: 16,
+              addRightDivider: true,
+            ),
+          ),
+          Expanded(
+            child: _StatColumn(
+              value: '124',
+              label: 'kg CO2',
+              valueSize: 20,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatColumn extends StatelessWidget {
+  const _StatColumn({
+    required this.value,
+    required this.label,
+    required this.valueSize,
+    this.addRightDivider = false,
+  });
+
+  final String value;
+  final String label;
+  final double valueSize;
+  final bool addRightDivider;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        border: addRightDivider ? const Border(right: BorderSide(color: FreightFairColors.border)) : null,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: FreightFairColors.accent,
+                  fontWeight: FontWeight.w500,
+                  fontSize: valueSize,
                 ),
-                const SizedBox(height: 18),
-                Text(mockCustomerName, style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: Colors.white, fontWeight: FontWeight.w800)),
-                const SizedBox(height: 4),
-                Text(mockCompanyName, style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.white.withValues(alpha: 0.9))),
-                const SizedBox(height: 4),
-                Text(mockPhoneNumber, style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.white.withValues(alpha: 0.9))),
-              ],
-            ),
           ),
-          const SizedBox(height: 18),
-          InfoCard(
-            child: Column(
-              children: mockProfileMenu.map((item) {
-                return Column(
-                  children: [
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(item.icon, color: item.isDanger ? FreightFairColors.error : FreightFairColors.accentDark),
-                      title: Text(
-                        item.title,
-                        style: TextStyle(fontWeight: FontWeight.w700, color: item.isDanger ? FreightFairColors.error : FreightFairColors.primaryText),
-                      ),
-                      subtitle: item.subtitle == null ? null : Text(item.subtitle!, style: const TextStyle(color: FreightFairColors.secondaryText)),
-                      trailing: item.isDanger ? null : const Icon(Icons.chevron_right_rounded),
-                      onTap: () {
-                        if (item.title == 'Order History') {
-                          controller.openOrders(tabIndex: 1);
-                        } else if (item.title == 'Logout') {
-                          Navigator.of(context).pushAndRemoveUntil(
-                            AppPageRoute(builder: (_) => const LoginScreen()),
-                            (route) => false,
-                          );
-                        } else {
-                          _showComingSoon(context, item.title);
-                        }
-                      },
-                    ),
-                    if (item != mockProfileMenu.last) const Divider(height: 1),
-                  ],
-                );
-              }).toList(),
-            ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: FreightFairColors.secondaryText,
+                  fontSize: 11,
+                ),
           ),
-          const SizedBox(height: 18),
-          InfoCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        ],
+      ),
+    );
+  }
+}
+
+class _MenuCard extends StatelessWidget {
+  const _MenuCard({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: const [
+          BoxShadow(color: Color(0x0F000000), blurRadius: 8, offset: Offset(0, 2)),
+        ],
+      ),
+      child: Column(children: children),
+    );
+  }
+}
+
+class _MenuItem extends StatelessWidget {
+  const _MenuItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.trailing,
+    this.iconBackgroundColor = FreightFairColors.accentLight,
+    this.iconColor = FreightFairColors.accent,
+    this.textColor = FreightFairColors.primaryText,
+    this.showChevron = true,
+    this.showDivider = true,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final String? trailing;
+  final Color iconBackgroundColor;
+  final Color iconColor;
+  final Color textColor;
+  final bool showChevron;
+  final bool showDivider;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
               children: [
-                Text('Member since', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: FreightFairColors.secondaryText)),
-                const SizedBox(height: 4),
-                Text('Jan 2024', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-                const SizedBox(height: 12),
-                Text('Total orders', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: FreightFairColors.secondaryText)),
-                const SizedBox(height: 4),
-                Text('28', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-                const SizedBox(height: 12),
-                Text('Total saved vs broker', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: FreightFairColors.secondaryText)),
-                const SizedBox(height: 4),
-                Text('₹42,800', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-                const SizedBox(height: 12),
-                Text('CO2 saved (empty trips eliminated)', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: FreightFairColors.secondaryText)),
-                const SizedBox(height: 4),
-                Text('124 kg 🌱', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: iconBackgroundColor,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, size: 17, color: iconColor),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: textColor,
+                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
+                        ),
+                  ),
+                ),
+                if (trailing != null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Text(
+                      trailing!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: FreightFairColors.secondaryText,
+                            fontSize: 13,
+                          ),
+                    ),
+                  ),
+                if (showChevron)
+                  const Icon(Icons.chevron_right_rounded, size: 16, color: Color(0xFFB0B0B0)),
               ],
             ),
           ),
+          if (showDivider)
+            const Divider(height: 1, thickness: 1, color: Color(0xFFF5F5F5)),
         ],
       ),
     );

@@ -18,22 +18,38 @@ class SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  color: titleColor ?? FreightFairColors.primaryText,
-                ),
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: titleColor ?? const Color(0xFF1A1A1A),
+                  ),
+            ),
           ),
-        ),
-        if (actionLabel != null)
-          TextButton(onPressed: onActionTap, child: Text(actionLabel!)),
-      ],
+          if (actionLabel != null) TextButton(onPressed: onActionTap, child: Text(actionLabel!)),
+        ],
+      ),
     );
   }
+}
+
+BoxDecoration elevatedSurfaceDecoration({Color color = Colors.white, BorderRadius? borderRadius}) {
+  return BoxDecoration(
+    color: color,
+    borderRadius: borderRadius ?? BorderRadius.circular(16),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.06),
+        blurRadius: 8,
+        offset: const Offset(0, 2),
+      ),
+    ],
+  );
 }
 
 class PrimaryButton extends StatelessWidget {
@@ -107,14 +123,7 @@ class StatCard extends StatelessWidget {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: FreightFairColors.cardBackground,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: FreightFairColors.border),
-          boxShadow: const [
-            BoxShadow(color: Color(0x0F000000), blurRadius: 8, offset: Offset(0, 2)),
-          ],
-        ),
+        decoration: elevatedSurfaceDecoration(color: FreightFairColors.accentLight),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -140,14 +149,7 @@ class InfoCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: padding ?? const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: FreightFairColors.cardBackground,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: FreightFairColors.border),
-        boxShadow: const [
-          BoxShadow(color: Color(0x0F000000), blurRadius: 8, offset: Offset(0, 2)),
-        ],
-      ),
+      decoration: elevatedSurfaceDecoration(),
       child: child,
     );
   }

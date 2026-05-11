@@ -25,7 +25,7 @@ class _FreightFairShellScreenState extends State<FreightFairShellScreen> {
     final controller = FreightFairScope.of(context);
 
     return Scaffold(
-      backgroundColor: FreightFairColors.background,
+      backgroundColor: FreightFairColors.secondaryBackground,
       body: IndexedStack(
         index: controller.currentTab,
         children: [
@@ -35,17 +35,23 @@ class _FreightFairShellScreenState extends State<FreightFairShellScreen> {
           _buildNavigator(_profileNavigatorKey, const ProfileScreen()),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        backgroundColor: FreightFairColors.background,
-        selectedIndex: controller.currentTab,
-        onDestinationSelected: controller.setTab,
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_rounded), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.search_rounded), label: 'Find Trucks'),
-          NavigationDestination(icon: Icon(Icons.inventory_2_rounded), label: 'Orders'),
-          NavigationDestination(icon: Icon(Icons.person_rounded), label: 'Profile'),
-        ],
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: FreightFairColors.border, width: 1)),
+        ),
+        child: NavigationBar(
+          backgroundColor: Colors.white,
+          selectedIndex: controller.currentTab,
+          onDestinationSelected: controller.setTab,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          destinations: const [
+            NavigationDestination(icon: Icon(Icons.home_rounded), label: 'Home'),
+            NavigationDestination(icon: Icon(Icons.search_rounded), label: 'Find Trucks'),
+            NavigationDestination(icon: Icon(Icons.inventory_2_rounded), label: 'Orders'),
+            NavigationDestination(icon: Icon(Icons.person_rounded), label: 'Profile'),
+          ],
+        ),
       ),
     );
   }

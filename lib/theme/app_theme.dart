@@ -29,18 +29,17 @@ class FreightFairTheme {
     );
 
     return base.copyWith(
-      scaffoldBackgroundColor: FreightFairColors.background,
+      scaffoldBackgroundColor: FreightFairColors.secondaryBackground,
       textTheme: GoogleFonts.dmSansTextTheme(base.textTheme).apply(
         bodyColor: FreightFairColors.primaryText,
         displayColor: FreightFairColors.primaryText,
       ),
       cardTheme: CardThemeData(
-        color: FreightFairColors.cardBackground,
+        color: FreightFairColors.background,
         elevation: 0,
         shadowColor: Colors.black.withValues(alpha: 0.06),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: FreightFairColors.border),
         ),
       ),
       dividerTheme: const DividerThemeData(color: FreightFairColors.border, thickness: 1),
@@ -49,10 +48,12 @@ class FreightFairTheme {
         foregroundColor: FreightFairColors.primaryText,
         elevation: 0,
         centerTitle: false,
+        surfaceTintColor: FreightFairColors.background,
+        shape: Border(bottom: BorderSide(color: FreightFairColors.border, width: 1)),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: FreightFairColors.secondaryBackground,
+        fillColor: FreightFairColors.background,
         hintStyle: const TextStyle(color: FreightFairColors.secondaryText),
         labelStyle: const TextStyle(color: FreightFairColors.secondaryText),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -100,6 +101,25 @@ class FreightFairTheme {
         unselectedItemColor: FreightFairColors.secondaryText,
         type: BottomNavigationBarType.fixed,
         elevation: 10,
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: FreightFairColors.background,
+        indicatorColor: Colors.transparent,
+        iconTheme: MaterialStateProperty.resolveWith((states) {
+          final selected = states.contains(MaterialState.selected);
+          return IconThemeData(
+            size: 22,
+            color: selected ? FreightFairColors.accent : FreightFairColors.secondaryText,
+          );
+        }),
+        labelTextStyle: MaterialStateProperty.resolveWith((states) {
+          final selected = states.contains(MaterialState.selected);
+          return TextStyle(
+            fontSize: 10,
+            color: selected ? FreightFairColors.accent : FreightFairColors.secondaryText,
+            fontWeight: FontWeight.w500,
+          );
+        }),
       ),
       chipTheme: base.chipTheme.copyWith(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),

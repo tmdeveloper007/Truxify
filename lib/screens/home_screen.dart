@@ -165,12 +165,7 @@ class _ShipmentCard extends StatelessWidget {
       child: Container(
         width: 290,
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: FreightFairColors.cardBackground,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: FreightFairColors.border),
-          boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 8, offset: Offset(0, 2))],
-        ),
+        decoration: elevatedSurfaceDecoration(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
