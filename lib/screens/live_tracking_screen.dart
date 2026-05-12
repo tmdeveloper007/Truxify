@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_cancellable_tile_provider/flutter_map_cancellable_tile_provider.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 import '../data/mock_data.dart';
@@ -21,11 +23,13 @@ class LiveTrackingScreen extends StatefulWidget {
 class _LiveTrackingScreenState extends State<LiveTrackingScreen> with SingleTickerProviderStateMixin {
   late final AnimationController _truckController;
   int _selectedTruckIndex = 0;
+  List<LatLng> _routePoints = const [_pickupPoint, _dropPoint];
 
   @override
   void initState() {
     super.initState();
     _truckController = AnimationController(vsync: this, duration: const Duration(seconds: 9))..repeat();
+    _loadRoute();
   }
 
   @override
@@ -176,10 +180,84 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> with SingleTick
   static const LatLng _dropPoint = LatLng(26.9124, 75.7873);
   static const List<double> _truckOffsets = <double>[0.44, 0.31];
 
-  LatLng _interpolatePoint(double t) {
+  Future<void> _loadRoute() async {
+    final uri = Uri.https(
+      'router.project-osrm.org',
+      '/route/v1/driving/${_pickupPoint.longitude},${_pickupPoint.latitude};${_dropPoint.longitude},${_dropPoint.latitude}',
+      const {
+        'overview': 'full',
+        'geometries': 'geojson',
+        'alternatives': 'false',
+        'steps': 'false',
+      },
+    );
+
+    try {
+      final response = await http.get(uri);
+      if (response.statusCode != 200) {
+        throw Exception('Route request failed with status ${response.statusCode}');
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final routes = decoded['routes'] as List<dynamic>?;
+      final route = routes != null && routes.isNotEmpty ? routes.first as Map<String, dynamic> : null;
+      final geometry = route?['geometry'] as Map<String, dynamic>?;
+      final coordinates = geometry?['coordinates'] as List<dynamic>?;
+
+      final routePoints = <LatLng>[];
+      if (coordinates != null) {
+        for (final coordinate in coordinates) {
+          if (coordinate is List && coordinate.length >= 2) {
+            final longitude = coordinate[0];
+            final latitude = coordinate[1];
+            if (longitude is num && latitude is num) {
+              routePoints.add(LatLng(latitude.toDouble(), longitude.toDouble()));
+            }
+          }
+        }
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _routePoints = routePoints.length >= 2 ? routePoints : const [_pickupPoint, _dropPoint];
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _routePoints = const [_pickupPoint, _dropPoint];
+      });
+    }
+  }
+
+  LatLng _pointAlongRoute(double t) {
+    final points = _routePoints;
+    if (points.length < 2) {
+      return _interpolatePoint(_pickupPoint, _dropPoint, t);
+    }
+
+    final clampedT = t.clamp(0.0, 1.0);
+    final totalSegments = points.length - 1;
+    final scaled = clampedT * totalSegments;
+    final segmentIndex = scaled.floor().clamp(0, totalSegments - 1);
+    final localT = scaled - segmentIndex;
+
+    if (segmentIndex >= totalSegments) {
+      return points.last;
+    }
+
+    return _interpolatePoint(points[segmentIndex], points[segmentIndex + 1], localT);
+  }
+
+  LatLng _interpolatePoint(LatLng start, LatLng end, double t) {
     return LatLng(
-      _pickupPoint.latitude + ((_dropPoint.latitude - _pickupPoint.latitude) * t),
-      _pickupPoint.longitude + ((_dropPoint.longitude - _pickupPoint.longitude) * t),
+      start.latitude + ((end.latitude - start.latitude) * t),
+      start.longitude + ((end.longitude - start.longitude) * t),
     );
   }
 
@@ -187,7 +265,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> with SingleTick
     return List<Marker>.generate(mockLiveTrackers.length, (index) {
       final offset = _truckOffsets[index % _truckOffsets.length];
       final progress = (offset + (animationProgress * 0.08)).clamp(0.05, 0.95);
-      final point = _interpolatePoint(progress);
+      final point = _pointAlongRoute(progress);
       final isSelected = index == _selectedTruckIndex;
 
       return Marker(
@@ -238,7 +316,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen> with SingleTick
                     PolylineLayer(
                       polylines: [
                         Polyline(
-                          points: const [_pickupPoint, _dropPoint],
+                          points: _routePoints,
                           strokeWidth: 4,
                           color: FreightFairColors.accentDark,
                         ),
