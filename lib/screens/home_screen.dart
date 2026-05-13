@@ -37,39 +37,45 @@ class HomeScreen extends StatelessWidget {
     final now = DateTime.now();
     final greeting = now.hour < 12 ? 'Good morning' : now.hour < 17 ? 'Good afternoon' : 'Good evening';
 
-    return SafeArea(
-      child: SingleChildScrollView(
+    return Scaffold(
+      appBar: AppBar(
+        titleSpacing: 20,
+        title: const AppLogo(iconSize: 20),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: Theme.of(context).brightness == Brightness.dark ? FreightFairColors.darkBorder : FreightFairColors.border,
+                  ),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.place_rounded, size: 16, color: FreightFairColors.accentDark),
+                    SizedBox(width: 6),
+                    Text('Surat, Gujarat', style: TextStyle(fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: () => _showComingSoon(context, 'Notifications'),
+            icon: const Icon(Icons.notifications_none_rounded),
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                const AppLogo(iconSize: 20),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: (Theme.of(context).brightness == Brightness.dark ? FreightFairColors.darkBorder : FreightFairColors.border)),
-                  ),
-                  child: Row(
-                    children: const [
-                      Icon(Icons.place_rounded, size: 16, color: FreightFairColors.accentDark),
-                      SizedBox(width: 6),
-                      Text('Surat, Gujarat', style: TextStyle(fontWeight: FontWeight.w700)),
-                    ],
-                  ),
-                ),
-                const Spacer(),
-                IconButton(
-                  onPressed: () => _showComingSoon(context, 'Notifications'),
-                  icon: const Icon(Icons.notifications_none_rounded),
-                ),
-              ],
-            ),
-            const SizedBox(height: 22),
             Text('$greeting, Karthik 👋', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
             const SizedBox(height: 6),
             Text(
