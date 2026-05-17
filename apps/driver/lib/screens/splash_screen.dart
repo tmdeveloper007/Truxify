@@ -38,7 +38,7 @@ class _SplashScreenState extends State<SplashScreen> {
               width: 92,
               height: 92,
               decoration: BoxDecoration(
-                color: TruxifyColors.white.withOpacity(0.16),
+                color: TruxifyColors.white.withValues(alpha: 0.16),
                 borderRadius: BorderRadius.circular(28),
               ),
               child: const Icon(Icons.local_shipping_rounded, color: TruxifyColors.accent, size: 44),

@@ -475,7 +475,9 @@ jobs:
               title: 'AI analysis failed - customer app',
               labels: ['flutter-ai-analysis', 'customer-app'],
               body: [
-                '<!--fp:ai-failure-customer-->',
+                '<
+                +
+                !--fp:ai-failure-customer-->',
                 '## AI Analysis Failed',
                 'Both Gemini and Groq failed to respond during the customer app analysis.',
                 '',

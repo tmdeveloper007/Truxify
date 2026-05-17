@@ -33,7 +33,7 @@ class AppCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: border ?? Border.all(color: color == TruxifyColors.cardBackground ? TruxifyColors.border : Colors.transparent),
         boxShadow: elevation > 0
-            ? [BoxShadow(color: TruxifyColors.accent.withOpacity(0.06), blurRadius: math.max(2, elevation), offset: const Offset(0, 2))]
+            ? [BoxShadow(color: TruxifyColors.accent.withValues(alpha: 0.06), blurRadius: math.max(2, elevation), offset: const Offset(0, 2))]
             : null,
       ),
       child: Padding(padding: padding, child: child),
@@ -106,7 +106,7 @@ class PrimaryButton extends StatelessWidget {
         foregroundColor: TruxifyColors.white,
         minimumSize: const Size.fromHeight(52),
         elevation: 4,
-        shadowColor: TruxifyColors.accent.withOpacity(0.25),
+        shadowColor: TruxifyColors.accent.withValues(alpha: 0.25),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
@@ -118,7 +118,7 @@ class PrimaryButton extends StatelessWidget {
         foregroundColor: TruxifyColors.white,
         minimumSize: const Size.fromHeight(52),
         elevation: 4,
-        shadowColor: TruxifyColors.accent.withOpacity(0.25),
+        shadowColor: TruxifyColors.accent.withValues(alpha: 0.25),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       child: Text(label, style: const TextStyle(color: TruxifyColors.white)),
@@ -222,6 +222,26 @@ class InfoRow extends StatelessWidget {
               ),
         ),
       ],
+    );
+  }
+}
+
+class DetailLine extends StatelessWidget {
+  const DetailLine({super.key, required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: Theme.of(context).textTheme.bodyMedium)),
+          Text(value, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700)),
+        ],
+      ),
     );
   }
 }

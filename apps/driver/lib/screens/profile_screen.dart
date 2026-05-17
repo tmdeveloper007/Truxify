@@ -80,9 +80,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     children: [
                       Text(driverName, style: textTheme.headlineSmall?.copyWith(color: TruxifyColors.white, fontWeight: FontWeight.w700)),
                       const SizedBox(height: 4),
-                      Text('$driverTruck · $driverTruckNumber', style: textTheme.bodyMedium?.copyWith(color: TruxifyColors.white.withOpacity(0.95))),
+                      Text('$driverTruck · $driverTruckNumber', style: textTheme.bodyMedium?.copyWith(color: TruxifyColors.white.withValues(alpha: 0.95))),
                       const SizedBox(height: 8),
-                      Text('⭐ $driverRating • $driverTrips trips', style: textTheme.bodySmall?.copyWith(color: TruxifyColors.white.withOpacity(0.95))),
+                      Text('⭐ $driverRating • $driverTrips trips', style: textTheme.bodySmall?.copyWith(color: TruxifyColors.white.withValues(alpha: 0.95))),
                     ],
                   ),
                 ),

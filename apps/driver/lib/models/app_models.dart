@@ -1,8 +1,91 @@
+import 'package:flutter/material.dart';
+
 enum LoadsSection { available, enRoute }
 
 enum TripStatus { delivered, inProgress, pending, cancelled }
 
 enum DocumentState { verified, expiringSoon }
+
+class RouteMapPoint {
+  const RouteMapPoint({
+    required this.id,
+    required this.title,
+    required this.subtitle,
+    required this.details,
+    required this.progress,
+    required this.claimed,
+    required this.icon,
+    required this.latitude,
+    required this.longitude,
+    this.loadOfferId,
+  });
+
+  final String id;
+  final String title;
+  final String subtitle;
+  final String details;
+  final double progress;
+  final bool claimed;
+  final IconData icon;
+  final double latitude;
+  final double longitude;
+
+  /// If non-null, this map point is linked to a [LoadOffer] with this id.
+  /// Tapping it should open the full load detail screen.
+  final String? loadOfferId;
+
+  bool get hasLoad => loadOfferId != null;
+
+  RouteMapPoint copyWith({
+    String? id,
+    String? title,
+    String? subtitle,
+    String? details,
+    double? progress,
+    bool? claimed,
+    IconData? icon,
+    double? latitude,
+    double? longitude,
+    String? loadOfferId,
+  }) {
+    return RouteMapPoint(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      subtitle: subtitle ?? this.subtitle,
+      details: details ?? this.details,
+      progress: progress ?? this.progress,
+      claimed: claimed ?? this.claimed,
+      icon: icon ?? this.icon,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      loadOfferId: loadOfferId ?? this.loadOfferId,
+    );
+  }
+}
+
+class RouteMapPlan {
+  const RouteMapPlan({
+    required this.routeLabel,
+    required this.destinationLabel,
+    required this.points,
+  });
+
+  final String routeLabel;
+  final String destinationLabel;
+  final List<RouteMapPoint> points;
+}
+
+class RouteMapScreenArgs {
+  const RouteMapScreenArgs({
+    required this.routeLabel,
+    required this.destinationLabel,
+    required this.points,
+  });
+
+  final String routeLabel;
+  final String destinationLabel;
+  final List<RouteMapPoint> points;
+}
 
 class LoadOffer {
   const LoadOffer({
@@ -36,8 +119,10 @@ class LoadOffer {
     required this.updatedTotalEarnings,
     this.bestProfit = false,
     this.routeSubtitle = '',
+    this.id = '',
   });
 
+  final String id;
   final String route;
   final String routeSubtitle;
   final String customer;

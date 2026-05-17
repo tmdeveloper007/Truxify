@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 import '../models/app_models.dart';
 
 const driverName = 'Ramesh Kumar';
@@ -40,8 +42,60 @@ const List<DemandRoute> demandRoutes = [
   ),
 ];
 
+const List<RouteMapPoint> activeRouteMapPoints = [
+  RouteMapPoint(
+    id: 'surat-yard',
+    title: 'Surat Yard',
+    subtitle: 'Pickup point',
+    details: 'Load already claimed and confirmed for dispatch from Surat.',
+    progress: 0.08,
+    claimed: true,
+    icon: Icons.storefront_rounded,
+    latitude: 21.1702,
+    longitude: 72.8311,
+    loadOfferId: 'load-surat-jaipur',
+  ),
+  RouteMapPoint(
+    id: 'vadodara-toll',
+    title: 'Vadodara Toll',
+    subtitle: 'Checkpoint',
+    details: 'Unclaimed road checkpoint on the corridor. Tap to claim if you are covering it.',
+    progress: 0.34,
+    claimed: false,
+    icon: Icons.toll_rounded,
+    latitude: 22.3072,
+    longitude: 73.1812,
+    loadOfferId: 'load-vadodara-mumbai',
+  ),
+  RouteMapPoint(
+    id: 'nh48-fuel',
+    title: 'NH48 Fuel Stop',
+    subtitle: 'Refuel point',
+    details: 'Claimed fuel stop with parking and quick refreshment access.',
+    progress: 0.58,
+    claimed: true,
+    icon: Icons.local_gas_station_rounded,
+    latitude: 23.0265,
+    longitude: 72.5873,
+    loadOfferId: 'load-ahmedabad-pune',
+  ),
+  RouteMapPoint(
+    id: 'jaipur-drop',
+    title: 'Jaipur Drop',
+    subtitle: 'Destination',
+    details: 'Final drop location. This remains unclaimed until the truck reaches Jaipur.',
+    progress: 0.94,
+    claimed: false,
+    icon: Icons.location_on_rounded,
+    latitude: 26.9124,
+    longitude: 75.7873,
+    loadOfferId: 'load-mumbai-delhi',
+  ),
+];
+
 const List<LoadOffer> availableLoads = [
   LoadOffer(
+    id: 'load-surat-jaipur',
     route: 'Surat → Jaipur',
     routeSubtitle: 'Best Profit',
     customer: 'Karthik Murugan',
@@ -74,6 +128,7 @@ const List<LoadOffer> availableLoads = [
     bestProfit: true,
   ),
   LoadOffer(
+    id: 'load-mumbai-delhi',
     route: 'Mumbai → Delhi',
     routeSubtitle: 'High Volume',
     customer: 'Raj Textiles',
@@ -105,6 +160,7 @@ const List<LoadOffer> availableLoads = [
     updatedTotalEarnings: '₹8,400',
   ),
   LoadOffer(
+    id: 'load-ahmedabad-pune',
     route: 'Ahmedabad → Pune',
     routeSubtitle: 'Nearest Pickup',
     customer: 'Sri Textiles',
@@ -136,6 +192,7 @@ const List<LoadOffer> availableLoads = [
     updatedTotalEarnings: '₹4,800',
   ),
   LoadOffer(
+    id: 'load-vadodara-mumbai',
     route: 'Vadodara → Mumbai',
     routeSubtitle: 'High Fill',
     customer: 'Krishna Exports',
@@ -345,3 +402,10 @@ const List<DocumentRecord> documentRecords = [
     ctaLabel: 'Renew Insurance',
   ),
 ];
+
+/// Lookup map: loadOfferId → LoadOffer.
+/// Used by [LoadPointDetailScreen] to resolve a map point to its full load data.
+final Map<String, LoadOffer> loadOfferById = {
+  for (final load in [...availableLoads, ...enRouteLoads])
+    if (load.id.isNotEmpty) load.id: load,
+};

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'core/app_routes.dart';
 import 'screens/documents_screen.dart';
 import 'screens/load_detail_screen.dart';
+import 'screens/load_point_detail_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/otp_screen.dart';
 import 'screens/shell_screen.dart';
@@ -42,6 +43,12 @@ class TruxifyApp extends StatelessWidget {
             return truxifyPageRoute(
               (context) => LoadDetailScreen(load: load),
             );
+          case AppRoutes.loadPointDetail:
+            final point = settings.arguments as RouteMapPoint;
+            return truxifyPageRoute(
+              (context) => LoadPointDetailScreen(point: point),
+            );
+          
           default:
             return truxifyPageRoute((context) => const SplashScreen());
         }

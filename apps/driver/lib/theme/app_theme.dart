@@ -77,7 +77,7 @@ class TruxifyTheme {
       cardTheme: CardThemeData(
         color: TruxifyColors.cardBackground,
         elevation: 0,
-        shadowColor: TruxifyColors.accent.withOpacity(0.06),
+        shadowColor: TruxifyColors.accent.withValues(alpha: 0.06),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
@@ -151,15 +151,15 @@ class TruxifyTheme {
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: TruxifyColors.cardBackground,
         indicatorColor: TruxifyColors.accentLight,
-        iconTheme: MaterialStateProperty.resolveWith((states) {
-          final selected = states.contains(MaterialState.selected);
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
           return IconThemeData(
             size: 22,
             color: selected ? TruxifyColors.accentDark : TruxifyColors.secondaryText,
           );
         }),
-        labelTextStyle: MaterialStateProperty.resolveWith((states) {
-          final selected = states.contains(MaterialState.selected);
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
           return TextStyle(
             fontSize: 10,
             color: selected ? TruxifyColors.accentDark : TruxifyColors.secondaryText,
@@ -209,7 +209,7 @@ class TruxifyTheme {
       cardTheme: CardThemeData(
         color: TruxifyColors.darkCardBackground,
         elevation: 0,
-        shadowColor: Colors.black.withOpacity(0.4),
+        shadowColor: Colors.black.withValues(alpha: 0.4),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
@@ -280,15 +280,15 @@ class TruxifyTheme {
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: TruxifyColors.darkSecondaryBackground,
         indicatorColor: TruxifyColors.darkAccentLight,
-        iconTheme: MaterialStateProperty.resolveWith((states) {
-          final selected = states.contains(MaterialState.selected);
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
           return IconThemeData(
             size: 22,
             color: selected ? TruxifyColors.accent : TruxifyColors.darkSecondaryText,
           );
         }),
-        labelTextStyle: MaterialStateProperty.resolveWith((states) {
-          final selected = states.contains(MaterialState.selected);
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
           return TextStyle(
             fontSize: 10,
             color: selected ? TruxifyColors.accent : TruxifyColors.darkSecondaryText,

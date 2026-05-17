@@ -4,11 +4,11 @@ import '../core/app_routes.dart';
 import '../models/app_models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_page_route.dart';
-import 'active_trip_screen.dart';
 import 'home_screen.dart';
-import 'loads_screen.dart';
+import 'coming_soon_screen.dart';
 import 'documents_screen.dart';
 import 'load_detail_screen.dart';
+import 'load_point_detail_screen.dart';
 import 'profile_screen.dart';
 import 'trip_history_screen.dart';
 import 'my_truck_screen.dart';
@@ -24,22 +24,15 @@ class ShellScreen extends StatefulWidget {
 class _ShellScreenState extends State<ShellScreen> {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   final ValueNotifier<int> _currentIndex = ValueNotifier<int>(0);
-  final ValueNotifier<LoadsSection> _loadsSection = ValueNotifier<LoadsSection>(LoadsSection.available);
 
   @override
   void dispose() {
     _currentIndex.dispose();
-    _loadsSection.dispose();
     super.dispose();
   }
 
   void _openTab(int index) {
     _currentIndex.value = index;
-  }
-
-  void _openLoads([LoadsSection section = LoadsSection.available]) {
-    _loadsSection.value = section;
-    _currentIndex.value = 1;
   }
 
   Route<dynamic> _routeFactory(RouteSettings settings) {
@@ -55,43 +48,27 @@ class _ShellScreenState extends State<ShellScreen> {
         return truxifyPageRoute((context) => const DocumentsScreen());
       case AppRoutes.loadDetail:
         return truxifyPageRoute((context) => LoadDetailScreen(load: settings.arguments as LoadOffer));
+      case AppRoutes.loadPointDetail:
+        return truxifyPageRoute((context) => LoadPointDetailScreen(point: settings.arguments as RouteMapPoint));
       default:
         return truxifyPageRoute(
           (context) {
             return ValueListenableBuilder<int>(
               valueListenable: _currentIndex,
               builder: (context, currentIndex, _) {
-                return ValueListenableBuilder<LoadsSection>(
-                  valueListenable: _loadsSection,
-                  builder: (context, loadsSection, __) {
-                    return IndexedStack(
-                      index: currentIndex,
-                      children: [
-                        HomeScreen(
-                          onViewActiveTrip: () => _openTab(2),
-                        ),
-                        LoadsScreen(
-                          key: ValueKey(loadsSection),
-                          initialSection: loadsSection,
-                          onSectionChanged: (section) {
-                            _loadsSection.value = section;
-                          },
-                          onOpenLoadDetail: (load) {
-                            _navigatorKey.currentState?.pushNamed(AppRoutes.loadDetail, arguments: load);
-                          },
-                        ),
-                        ActiveTripScreen(
-                          onViewLoads: () => _openLoads(LoadsSection.enRoute),
-                        ),
-                        ProfileScreen(
-                          onOpenTripHistory: () => _navigatorKey.currentState?.pushNamed(AppRoutes.tripHistory),
-                          onOpenDocuments: () => _navigatorKey.currentState?.pushNamed(AppRoutes.documents),
-                          onOpenMyTruck: () => _navigatorKey.currentState?.pushNamed(AppRoutes.myTruck),
-                          onOpenEarnings: () => _navigatorKey.currentState?.pushNamed(AppRoutes.earnings),
-                        ),
-                      ],
-                    );
-                  },
+                return IndexedStack(
+                  index: currentIndex,
+                  children: [
+                    const HomeScreen(),
+                    const ComingSoonScreen(label: 'Loads'),
+                    const ComingSoonScreen(label: 'Active Trip'),
+                    ProfileScreen(
+                      onOpenTripHistory: () => _navigatorKey.currentState?.pushNamed(AppRoutes.tripHistory),
+                      onOpenDocuments: () => _navigatorKey.currentState?.pushNamed(AppRoutes.documents),
+                      onOpenMyTruck: () => _navigatorKey.currentState?.pushNamed(AppRoutes.myTruck),
+                      onOpenEarnings: () => _navigatorKey.currentState?.pushNamed(AppRoutes.earnings),
+                    ),
+                  ],
                 );
               },
             );
