@@ -3,28 +3,35 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 
+class _FaqItem {
+  const _FaqItem({required this.question, required this.answer});
+
+  final String question;
+  final String answer;
+}
+
 class HelpSupportScreen extends StatelessWidget {
   const HelpSupportScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final faqs = [
-      {
-        'question': 'How do I book a truck?',
-        'answer': 'To book a truck, go to Home, enter your pickup and drop locations, select a truck, and confirm your booking.',
-      },
-      {
-        'question': 'What payment methods are accepted?',
-        'answer': 'We accept UPI, credit cards, debit cards, and net banking for all your transactions.',
-      },
-      {
-        'question': 'Can I cancel my order?',
-        'answer': 'You can cancel your order before the truck is assigned. After assignment, a cancellation fee may apply.',
-      },
-      {
-        'question': 'How do I track my shipment?',
-        'answer': 'You can track your shipment in real-time from the Orders section using the live tracking feature.',
-      },
+    const faqs = [
+      _FaqItem(
+        question: 'How do I book a truck?',
+        answer: 'To book a truck, go to Home, enter your pickup and drop locations, select a truck, and confirm your booking.',
+      ),
+      _FaqItem(
+        question: 'What payment methods are accepted?',
+        answer: 'We accept UPI, credit cards, debit cards, and net banking for all your transactions.',
+      ),
+      _FaqItem(
+        question: 'Can I cancel my order?',
+        answer: 'You can cancel your order before the truck is assigned. After assignment, a cancellation fee may apply.',
+      ),
+      _FaqItem(
+        question: 'How do I track my shipment?',
+        answer: 'You can track your shipment in real-time from the Orders section using the live tracking feature.',
+      ),
     ];
 
     return Scaffold(
@@ -96,15 +103,13 @@ class HelpSupportScreen extends StatelessWidget {
               separatorBuilder: (_, __) => const SizedBox(height: 10),
               itemBuilder: (context, index) {
                 final faq = faqs[index];
-                final question = faq['question'] ?? '';
-                final answer = faq['answer'] ?? '';
                 return Theme(
                   data: Theme.of(context).copyWith(
                     dividerColor: Colors.transparent,
                   ),
                   child: ExpansionTile(
                     title: Text(
-                      question,
+                      faq.question,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             fontWeight: FontWeight.w500,
                           ),
@@ -113,7 +118,7 @@ class HelpSupportScreen extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         child: Text(
-                          answer,
+                          faq.answer,
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                 color: FreightFairColors.adaptiveSecondaryText(context),
                               ),
