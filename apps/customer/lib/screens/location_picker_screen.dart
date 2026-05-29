@@ -307,7 +307,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                             point: _selectedPoint!,
                             width: 44,
                             height: 44,
-                            child: const Icon(Icons.place_rounded, color: Colors.redAccent, size: 34),
+                            child: const Icon(Icons.place_rounded, color: Colors.green, size: 34),
                           ),
                         ],
                       ),
