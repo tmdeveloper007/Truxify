@@ -43,7 +43,10 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
 
   @override
   Widget build(BuildContext context) {
-    final tabController = _tabController!;
+    final tabController = _tabController;
+    if (tabController == null) {
+      return const SizedBox.shrink();
+    }
 
     return SafeArea(
       child: Column(
