@@ -22,6 +22,13 @@ class _LanguageScreenState extends State<LanguageScreen> {
     {'code': 'te', 'name': 'Telugu', 'native': 'తెలుగు'},
   ];
 
+  void _showLanguageChangedSnackBar() {
+    final languageName = _languages[_selectedLanguageIndex]['name'] ?? '';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Language changed to $languageName')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -92,9 +99,7 @@ class _LanguageScreenState extends State<LanguageScreen> {
             PrimaryButton(
               label: 'Apply',
               onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Language changed to ${_languages[_selectedLanguageIndex]['name']}')),
-                );
+                _showLanguageChangedSnackBar();
                 Navigator.of(context).pop();
               },
             ),
