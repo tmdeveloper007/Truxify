@@ -5,35 +5,35 @@ import '../theme/app_theme.dart';
 class MyDocumentsScreen extends StatelessWidget {
   const MyDocumentsScreen({super.key});
 
+  static const List<Map<String, Object>> _documents = [
+    {
+      'name': 'Aadhar Card',
+      'status': 'Verified',
+      'icon': Icons.card_membership_rounded,
+      'statusColor': Colors.green,
+    },
+    {
+      'name': 'PAN Card',
+      'status': 'Verified',
+      'icon': Icons.credit_card_rounded,
+      'statusColor': Colors.green,
+    },
+    {
+      'name': 'Business License',
+      'status': 'Pending',
+      'icon': Icons.description_rounded,
+      'statusColor': Colors.orange,
+    },
+    {
+      'name': 'Bank Account',
+      'status': 'Verified',
+      'icon': Icons.account_balance_rounded,
+      'statusColor': Colors.green,
+    },
+  ];
+
   @override
   Widget build(BuildContext context) {
-    final documents = <Map<String, dynamic>>[
-      {
-        'name': 'Aadhar Card',
-        'status': 'Verified',
-        'icon': Icons.card_membership_rounded,
-        'statusColor': Colors.green,
-      },
-      {
-        'name': 'PAN Card',
-        'status': 'Verified',
-        'icon': Icons.credit_card_rounded,
-        'statusColor': Colors.green,
-      },
-      {
-        'name': 'Business License',
-        'status': 'Pending',
-        'icon': Icons.description_rounded,
-        'statusColor': Colors.orange,
-      },
-      {
-        'name': 'Bank Account',
-        'status': 'Verified',
-        'icon': Icons.account_balance_rounded,
-        'statusColor': Colors.green,
-      },
-    ];
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('My Documents'),
@@ -48,10 +48,10 @@ class MyDocumentsScreen extends StatelessWidget {
             ListView.separated(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              itemCount: documents.length,
+              itemCount: _documents.length,
               separatorBuilder: (_, __) => const SizedBox(height: 10),
               itemBuilder: (context, index) {
-                final doc = documents[index];
+                final doc = _documents[index];
                 return Container(
                   decoration: BoxDecoration(
                     border: Border.all(color: (Theme.of(context).brightness == Brightness.dark ? TruxifyColors.darkBorder : TruxifyColors.border)),
