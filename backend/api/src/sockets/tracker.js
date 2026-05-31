@@ -6,6 +6,13 @@ import { mongoDb, redisClient, firebaseAdmin } from '../config/db.js';
 // Value: Set of WebSocket client connections
 const trackingSubscriptions = new Map();
 
+// =====================================================================
+// 📦 EXTRA STORAGE & BUFFER CONFIGURATIONS (#269)
+// =====================================================================
+let telemetryWriteBuffer = [];
+const BUFFER_FLUSH_INTERVAL_MS = 20000; // 20-second sliding time window
+let isSchedulerActive = false;
+
 /**
  * Initialize WebSockets Server and bind event handlers
  */
@@ -116,49 +123,74 @@ export function initWebSocketServer(server) {
     clearInterval(interval);
   });
 
+  // Automatically spin up the DB batch flushing system thread
+  if (!isSchedulerActive) {
+    initTelemetryScheduler();
+  }
+
   console.log('🚀 WebSocket tracking router initialized.');
 }
 
 /**
  * Handle incoming GPS coordinate telemetry from a driver app
- * Data properties: driver_id, order_display_id, latitude, longitude, speed, bearing
+ * Data properties: driver_id, order_display_id, latitude, longitude, speed, bearing, device_timestamp
  */
 async function handleLocationPing(ws, data) {
-  const { driver_id, order_display_id, latitude, longitude, speed, bearing } = data;
+  const { driver_id, order_display_id, latitude, longitude, speed, bearing, device_timestamp } = data;
 
   if (!driver_id || !latitude || !longitude) {
     return ws.send(JSON.stringify({ error: 'Missing mandatory tracking parameters (driver_id, lat, lng).' }));
   }
 
-  const timestamp = new Date();
+  // Use explicit device incoming timestamp or fall back to current server clock safely
+  const currentPingTime = device_timestamp ? new Date(device_timestamp) : new Date();
+  const incomingEpoch = currentPingTime.getTime();
 
-  // 1. Log telemetry coordinate to MongoDB Atlas (Persistent history)
-  if (mongoDb) {
+  // 🛡️ 1. IDEMPOTENCY GATE & OUT-OF-ORDER SEQUENCER
+  if (redisClient) {
     try {
-      const collection = mongoDb.collection('live_gps_pings');
-      await collection.insertOne({
-        driver_id,
-        order_display_id: order_display_id || null,
-        location: {
-          type: 'Point',
-          coordinates: [longitude, latitude] // GeoJSON format: [lng, lat]
-        },
-        speed_kmh: speed || 0,
-        bearing_deg: bearing || 0,
-        pinged_at: timestamp
-      });
+      const seqKey = `driver:sequence:${driver_id}`;
+      const lastRecordedEpochStr = await redisClient.get(seqKey);
+      
+      if (lastRecordedEpochStr) {
+        const lastRecordedEpoch = parseInt(lastRecordedEpochStr, 10);
+        
+        // If arriving frame is older or matches current timeline sequence (Jitter drop), terminate pipeline execution
+        if (incomingEpoch <= lastRecordedEpoch) {
+          console.warn(`[TRUXIFY SEQUENCE CONTROL] Out-of-order telemetry dropped for Driver: ${driver_id}. Stale jitter detected.`);
+          return;
+        }
+      }
+      
+      // Update high-speed caching with current epoch sequence checkpoint
+      await redisClient.set(seqKey, incomingEpoch.toString(), 'EX', 86400); // 24hr retention limit
     } catch (err) {
-      console.error('Mongo insert telemetry error:', err.message);
+      console.error('Redis sequence verification cache error:', err.message);
     }
   }
 
-  // 2. Cache current location in Redis with 2 minutes expiry (Upstash)
+  // 🛡️ 2. WRITE-BUFFER DEFERMENT (BATCHING)
+  // Instead of pushing to MongoDB on every single ping, append array snapshots to buffer layout
+  telemetryWriteBuffer.push({
+    driver_id,
+    order_display_id: order_display_id || null,
+    location: {
+      type: 'Point',
+      coordinates: [parseFloat(longitude), parseFloat(latitude)]
+    },
+    speed_kmh: speed || 0,
+    bearing_deg: bearing || 0,
+    pinged_at: currentPingTime,
+    buffered_at: new Date()
+  });
+
+  // 3. Cache current location in Redis with 2 minutes expiry (Upstash telemetry fallback)
   if (redisClient) {
     try {
       const redisKey = `driver:location:${driver_id}`;
       await redisClient.set(
         redisKey,
-        JSON.stringify({ latitude, longitude, speed, bearing, updated_at: timestamp }),
+        JSON.stringify({ latitude, longitude, speed, bearing, updated_at: currentPingTime }),
         'EX',
         120
       );
@@ -167,7 +199,7 @@ async function handleLocationPing(ws, data) {
     }
   }
 
-  // 3. Broadcast to all clients subscribed to this driver's telemetry stream
+  // 4. Broadcast to all clients subscribed to this driver's telemetry stream
   const broadcastPayload = JSON.stringify({
     event: 'location_update',
     data: {
@@ -177,7 +209,7 @@ async function handleLocationPing(ws, data) {
       longitude,
       speed,
       bearing,
-      timestamp
+      timestamp: currentPingTime
     }
   });
 
@@ -200,6 +232,42 @@ async function handleLocationPing(ws, data) {
       }
     });
   }
+}
+
+/**
+ * Periodically dumps the aggregated batch matrix logs into MongoDB Atlas database collections
+ */
+async function flushTelemetryBuffer() {
+  if (telemetryWriteBuffer.length === 0) return;
+
+  // Clone current buffer block state and isolate storage arrays instantly
+  const recordsToFlush = [...telemetryWriteBuffer];
+  telemetryWriteBuffer = [];
+
+  console.log(`[TRUXIFY BATCH CONTROL] Committing bulk cluster of ${recordsToFlush.length} spatial rows to MongoDB...`);
+
+  if (mongoDb) {
+    try {
+      const collection = mongoDb.collection('live_gps_pings');
+      // Bulk insert array elements simultaneously
+      await collection.insertMany(recordsToFlush, { ordered: false });
+      console.log(`[TRUXIFY DB SUCCESS] Successfully flushed ${recordsToFlush.length} records to MongoDB clusters.`);
+    } catch (err) {
+      console.error('Mongo bulk insert telemetry logs crashed:', err.message);
+      // Recovery track: re-insert frames back into execution pools
+      telemetryWriteBuffer = [...recordsToFlush, ...telemetryWriteBuffer];
+    }
+  }
+}
+
+/**
+ * Initializes sliding scheduler clock cycles
+ */
+function initTelemetryScheduler() {
+  isSchedulerActive = true;
+  setInterval(async () => {
+    await flushTelemetryBuffer();
+  }, BUFFER_FLUSH_INTERVAL_MS);
 }
 
 /**
