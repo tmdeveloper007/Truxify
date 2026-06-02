@@ -2,7 +2,7 @@
 
 # 🚛 Truxify
 
-### Broker-Free · ML-Powered · Blockchain-Secured Freight Platform
+### Broker-Free · ML-Powered · Blockchain-Secured Freight Platform 
 
 **Directly connecting manufacturers and truck drivers — eliminating the middleman, maximising earnings, and bringing transparency to India's ₹14 lakh crore freight industry.**
 
