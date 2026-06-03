@@ -5,7 +5,7 @@ import '../data/mock_data.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:truxify_shared/truxify_shared.dart';
+import 'package:truxify_shared/truxify_shared.dart' hide NotificationsScreen;
 import 'notifications_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
