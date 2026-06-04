@@ -554,6 +554,10 @@ class _OtpInputRowState extends State<OtpInputRow> {
         offset: _zwsp.length,
       );
       if (index > 0) {
+        controllers[index - 1].text = _zwsp;
+        controllers[index - 1].selection = TextSelection.collapsed(
+          offset: _zwsp.length,
+        );
         focusNodes[index - 1].requestFocus();
       }
     } else {
