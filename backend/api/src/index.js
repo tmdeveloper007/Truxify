@@ -4,6 +4,7 @@ import http from 'http';
 import dotenv from 'dotenv';
 import path from 'path';
 import rateLimit from 'express-rate-limit';
+import tripRoutes from './routes/tripRoutes.js';
 
 // Pre-load DB config to execute client setups
 import './config/db.js';
@@ -54,6 +55,7 @@ const healthLimiter = rateLimit({
 
 app.use('/api/', limiter);
 app.use('/api/health', healthLimiter);
+app.use('/api/v1/trips', tripRoutes);
 
 
 
