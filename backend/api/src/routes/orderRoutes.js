@@ -1,9 +1,103 @@
 import express from 'express';
+import { z } from 'zod'; // 🔒 ADDED ZOD FOR ISSUE #361
 import { supabase } from '../config/db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { computeOrderPricing } from '../lib/pricing.js';
 
 const router = express.Router();
+
+// ============================================================================
+// 🛡️ ZOD VALIDATION SCHEMAS & MIDDLEWARE (ISSUE #361)
+// ============================================================================
+
+// Reusable Middleware to execute Zod validation
+const validateRequest = (schema, source = 'body') => (req, res, next) => {
+  try {
+    // Parse either req.body, req.params, or req.query based on the route needs
+    if (source === 'body') req.body = schema.parse(req.body);
+    if (source === 'params') req.params = schema.parse(req.params);
+    if (source === 'query') req.query = schema.parse(req.query);
+    next();
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const formattedErrors = error.errors.map(err => ({
+        field: err.path.join('.'),
+        message: err.message
+      }));
+      return res.status(400).json({ 
+        error: 'Malformed request payload', 
+        details: formattedErrors 
+      });
+    }
+    next(error);
+  }
+};
+
+// --- Reusable Schema Primitives ---
+const coordinateSchema = z.preprocess(
+  (val) => Number(val),
+  z.number({ invalid_type_error: "Coordinate must be a number" })
+);
+
+const latitudeSchema = coordinateSchema.min(-90, "Latitude must be >= -90").max(90, "Latitude must be <= 90");
+const longitudeSchema = coordinateSchema.min(-180, "Longitude must be >= -180").max(180, "Longitude must be <= 180");
+const uuidSchema = z.string().uuid("Invalid ID format");
+const dateRegex = /^\d{4}-\d{2}-\d{2}$/; // YYYY-MM-DD
+const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/; // HH:MM or HH:MM:SS
+const upiRegex = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
+
+// --- Route-Specific Schemas ---
+
+// 1. Create Order Schema
+const createOrderSchema = z.object({
+  pickup_address: z.string().min(5, "Pickup address is too short").max(255, "Pickup address is too long"),
+  pickup_lat: latitudeSchema,
+  pickup_lng: longitudeSchema,
+  drop_address: z.string().min(5, "Drop address is too short").max(255, "Drop address is too long"),
+  drop_lat: latitudeSchema,
+  drop_lng: longitudeSchema,
+  pickup_date: z.string().regex(dateRegex, "Date must be in YYYY-MM-DD format"),
+  pickup_time: z.string().regex(timeRegex, "Time must be in HH:MM format"),
+  goods_type: z.string().min(2, "Goods type must be specified"),
+  weight_tonnes: z.preprocess((val) => Number(val), z.number().positive("Weight must be greater than 0").max(100, "Weight exceeds maximum legal limits")),
+  length_ft: z.preprocess((val) => Number(val), z.number().positive().max(60).optional()),
+  width_ft: z.preprocess((val) => Number(val), z.number().positive().max(15).optional()),
+  height_ft: z.preprocess((val) => Number(val), z.number().positive().max(15).optional()),
+  is_stackable: z.boolean().default(false).optional(),
+  is_fragile: z.boolean().default(false).optional(),
+  special_requirements: z.string().max(500).optional(),
+  payment_method_id: z.string().optional(),
+  upi_id: z.string().regex(upiRegex, "Invalid UPI ID format").optional().or(z.literal(''))
+}).refine(data => {
+  // Ensure pickup and drop are not the exact same coordinates
+  return !(data.pickup_lat === data.drop_lat && data.pickup_lng === data.drop_lng);
+}, {
+  message: "Pickup and Drop locations cannot be identical",
+  path: ["drop_lat", "drop_lng"]
+});
+
+// 2. Param ID Schema (For fetching specific orders)
+const paramIdSchema = z.object({
+  id: uuidSchema.or(z.string().min(1, "ID is required")) // Assuming it could be UUID or custom int/string
+});
+
+// 3. Bid Submission Schema
+const submitBidSchema = z.object({
+  bid_amount: z.number()
+    .int("Bid amount must be an integer (in paisa)")
+    .positive("Bid amount must be greater than zero")
+    .min(10000, "Minimum bid is ₹100 (10,000 paisa)")
+});
+
+// 4. Accept Bid Params Schema
+const acceptBidParamsSchema = z.object({
+  id: z.string().min(1, "Order ID is required"),
+  bidId: z.string().min(1, "Bid ID is required")
+});
+
+// ============================================================================
+// CORE ROUTER LOGIC
+// ============================================================================
 
 /**
  * Helper to generate order display IDs like #FF20260521
@@ -18,8 +112,10 @@ function generateOrderDisplayId() {
 
 // ============================================================================
 // 1. CREATE AN ORDER (CUSTOMER)
+// 🔒 Added validateRequest(createOrderSchema)
 // ============================================================================
-router.post('/', authenticate, requireRole(['customer']), async (req, res) => {
+router.post('/', authenticate, requireRole(['customer']), validateRequest(createOrderSchema, 'body'), async (req, res) => {
+  // Zod has already sanitized and typed these variables
   const {
     pickup_address, pickup_lat, pickup_lng,
     drop_address, drop_lat, drop_lng,
@@ -29,29 +125,21 @@ router.post('/', authenticate, requireRole(['customer']), async (req, res) => {
     payment_method_id, upi_id
   } = req.body;
 
-  // Basic validations
-  if (!pickup_address || !pickup_lat || !pickup_lng || !drop_address || !drop_lat || !drop_lng || !goods_type || !weight_tonnes) {
-    return res.status(400).json({ error: 'Missing required routing or cargo specification fields.' });
-  }
-
   // ============================================================================
   // Server-side pricing (single source of truth).
   // Client-supplied monetary fields are no longer accepted; pricing is derived
-  // from route geometry, cargo weight, and the goods-class multipliers. See
-  // ../lib/pricing.js for the rate card (env-overridable) and the full
-  // derivation. If the customer passed monetary fields anyway we silently
-  // drop them — the server's number is the only number that gets persisted.
+  // from route geometry, cargo weight, and the goods-class multipliers.
   // ============================================================================
   let pricing;
   try {
     pricing = computeOrderPricing({
-      pickupLat:  Number(pickup_lat),
-      pickupLng:  Number(pickup_lng),
-      dropLat:    Number(drop_lat),
-      dropLng:    Number(drop_lng),
-      weightTonnes: Number(weight_tonnes),
-      isFragile:   Boolean(is_fragile),
-      isStackable: Boolean(is_stackable),
+      pickupLat:  pickup_lat,
+      pickupLng:  pickup_lng,
+      dropLat:    drop_lat,
+      dropLng:    drop_lng,
+      weightTonnes: weight_tonnes,
+      isFragile:   is_fragile,
+      isStackable: is_stackable,
     });
   } catch (pricingErr) {
     console.error('Pricing computation error:', pricingErr.message);
@@ -110,8 +198,6 @@ router.post('/', authenticate, requireRole(['customer']), async (req, res) => {
     }
 
     // Step 3: Automatically expose this order as a "load_offer" for drivers.
-    // Freight value, fuel cost, toll cost, and net profit all come from the
-    // server-computed `pricing` object — never from the request body.
     const { error: offerErr } = await supabase
       .from('load_offers')
       .insert({
@@ -169,8 +255,9 @@ router.get('/history', authenticate, requireRole(['customer']), async (req, res)
 
 // ============================================================================
 // 3. FETCH SPECIFIC ORDER DETAILS AND TIMELINE (CUSTOMER OR DRIVER)
+// 🔒 Added validateRequest(paramIdSchema)
 // ============================================================================
-router.get('/:id', authenticate, async (req, res) => {
+router.get('/:id', authenticate, validateRequest(paramIdSchema, 'params'), async (req, res) => {
   const orderId = req.params.id;
 
   try {
@@ -201,7 +288,7 @@ router.get('/:id', authenticate, async (req, res) => {
       .eq('order_display_id', order.order_display_id)
       .order('sort_order', { ascending: true });
 
-    // 3.3 Fetch driver details if assigned (Logical application join)
+    // 3.3 Fetch driver details if assigned
     let driverProfile = null;
     if (order.driver_id) {
       const { data: profile } = await supabase
@@ -240,14 +327,11 @@ router.get('/:id', authenticate, async (req, res) => {
 
 // ============================================================================
 // 4. SUBMIT BID FOR LOAD OFFER (DRIVER)
+// 🔒 Added validateRequest(submitBidSchema) & paramIdSchema
 // ============================================================================
-router.post('/:id/bids', authenticate, requireRole(['driver']), async (req, res) => {
+router.post('/:id/bids', authenticate, requireRole(['driver']), validateRequest(paramIdSchema, 'params'), validateRequest(submitBidSchema, 'body'), async (req, res) => {
   const loadOfferId = req.params.id; // load_offers.id
-  const { bid_amount } = req.body; // in paisa
-
-  if (!bid_amount || bid_amount <= 0) {
-    return res.status(400).json({ error: 'Invalid bid amount.' });
-  }
+  const { bid_amount } = req.body; // securely validated in paisa
 
   try {
     // Check if the load exists and is still available
@@ -293,8 +377,9 @@ router.post('/:id/bids', authenticate, requireRole(['driver']), async (req, res)
 
 // ============================================================================
 // 5. VIEW BIDS FOR AN ORDER (CUSTOMER)
+// 🔒 Added validateRequest(paramIdSchema)
 // ============================================================================
-router.get('/:id/bids', authenticate, requireRole(['customer']), async (req, res) => {
+router.get('/:id/bids', authenticate, requireRole(['customer']), validateRequest(paramIdSchema, 'params'), async (req, res) => {
   const orderId = req.params.id;
 
   try {
@@ -320,7 +405,7 @@ router.get('/:id/bids', authenticate, requireRole(['customer']), async (req, res
       return res.json([]); // No load offer created yet
     }
 
-    // Fetch active bids and join driver profiles at app layer (independent tables join)
+    // Fetch active bids and join driver profiles
     const { data: bids, error: bidErr } = await supabase
       .from('load_bids')
       .select('*')
@@ -336,7 +421,6 @@ router.get('/:id/bids', authenticate, requireRole(['customer']), async (req, res
       return res.json([]);
     }
 
-    // Populate profile and truck data
     // Batch fetch all driver IDs at once
     const driverIds = bids.map(b => b.driver_id);
 
@@ -404,8 +488,9 @@ router.get('/:id/bids', authenticate, requireRole(['customer']), async (req, res
 
 // ============================================================================
 // 6. ACCEPT BID (CUSTOMER)
+// 🔒 Added validateRequest(acceptBidParamsSchema)
 // ============================================================================
-router.post('/:id/bids/:bidId/accept', authenticate, requireRole(['customer']), async (req, res) => {
+router.post('/:id/bids/:bidId/accept', authenticate, requireRole(['customer']), validateRequest(acceptBidParamsSchema, 'params'), async (req, res) => {
   const orderId = req.params.id;
   const bidId = req.params.bidId;
 
@@ -447,12 +532,6 @@ router.post('/:id/bids/:bidId/accept', authenticate, requireRole(['customer']), 
 
     let truckInfo = null;
     if (details && details.truck_id) {
-      // The Supabase `maybeSingle()` builder returns a thenable, but
-      // awaiting the outer promise with `.then(res => res.data)` here
-      // would re-wrap the row in another Promise, leaving `truckInfo` as
-      // a Promise object (whose `id` and `number_plate` properties are
-      // undefined). Use a normal `await` and destructure `data` so the
-      // row is actually unwrapped before the RPC call below.
       const { data, error: truckErr } = await supabase
         .from('trucks')
         .select('id, name, number_plate')
