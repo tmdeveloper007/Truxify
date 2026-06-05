@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'supabase_service.dart';
 
 class OrderService {
   OrderService({SupabaseClient? client}) : _providedClient = client;
@@ -25,7 +26,7 @@ class OrderService {
   }) async {
     await _client.from('orders').insert({
       'order_display_id': orderDisplayId,
-      'customer_id': '11111111-1111-1111-1111-111111111111',
+      'customer_id': SupabaseService.requireUserId(),
       'driver_id': driverId,
       'truck_id': truckId,
       'status': 'pending',
@@ -45,19 +46,25 @@ class OrderService {
   }
 
   Future<Map<String, dynamic>?> fetchOrderById(String orderDisplayId) async {
+    final userId = SupabaseService.requireUserId();
+
     final response = await _client
         .from('orders')
         .select()
         .eq('order_display_id', orderDisplayId)
+        .eq('customer_id', userId)
         .maybeSingle();
 
     return response;
   }
 
   Future<List<Map<String, dynamic>>> fetchOrders() async {
+    final userId = SupabaseService.requireUserId();
+
     final response = await _client
         .from('orders')
         .select()
+        .eq('customer_id', userId)
         .order('pickup_date', ascending: false);
 
     debugPrint('Orders response: $response');
@@ -78,16 +85,25 @@ class OrderService {
   }
 
   Future<List<Map<String, dynamic>>> fetchActiveOrders() async {
+    final userId = SupabaseService.requireUserId();
+
     final response = await _client
         .from('orders')
         .select()
+        .eq('customer_id', userId)
         .inFilter('status', ['pending', 'active', 'in_transit']);
 
     return List<Map<String, dynamic>>.from(response);
   }
 
   Future<List<Map<String, dynamic>>> fetchHistoryOrders() async {
-    final response = await _client.from('orders').select().inFilter('status', [
+    final userId = SupabaseService.requireUserId();
+
+    final response = await _client
+        .from('orders')
+        .select()
+        .eq('customer_id', userId)
+        .inFilter('status', [
       'completed',
       'delivered',
       'payment_released',
