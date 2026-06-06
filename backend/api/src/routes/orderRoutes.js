@@ -2,6 +2,7 @@ import express from 'express';
 import { supabase } from '../config/db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { computeOrderPricing } from '../lib/pricing.js';
+import { getRouteEstimate } from '../services/osrm.js';
 
 const router = express.Router();
 
@@ -44,12 +45,19 @@ router.post('/', authenticate, requireRole(['customer']), async (req, res) => {
   // ============================================================================
   let pricing;
   try {
+    const routeEstimate = await getRouteEstimate({
+      pickupLat: Number(pickup_lat),
+      pickupLng: Number(pickup_lng),
+      dropLat: Number(drop_lat),
+      dropLng: Number(drop_lng),
+    });
     pricing = computeOrderPricing({
       pickupLat:  Number(pickup_lat),
       pickupLng:  Number(pickup_lng),
       dropLat:    Number(drop_lat),
       dropLng:    Number(drop_lng),
       weightTonnes: Number(weight_tonnes),
+      roadDistanceKm: routeEstimate?.distanceKm,
       isFragile:   Boolean(is_fragile),
       isStackable: Boolean(is_stackable),
     });
@@ -451,7 +459,29 @@ router.post('/:id/bids/:bidId/accept', authenticate, requireRole(['customer']), 
       return res.status(404).json({ error: 'Bid is not active or not found.' });
     }
 
-    // 6.3 Fetch driver details & truck details for denormalized snapshot storage
+    // 6.3 Verify the bid belongs to this order's load offer
+    const { data: loadOffer, error: loadOfferErr } = await supabase
+      .from('load_offers')
+      .select('id')
+      .eq('order_display_id', order.order_display_id)
+      .maybeSingle();
+
+    if (loadOfferErr) {
+      return res.status(500).json({
+        error: 'Failed to verify bid ownership.',
+        details: loadOfferErr.message
+      });
+    }
+
+    if (!loadOffer) {
+      return res.status(404).json({ error: 'Load offer for this order was not found.' });
+    }
+
+    if (bid.load_id !== loadOffer.id) {
+      return res.status(403).json({ error: 'Access Denied: Bid does not belong to this order.' });
+    }
+
+    // 6.4 Fetch driver details & truck details for denormalized snapshot storage
     const { data: profile } = await supabase
       .from('profiles')
       .select('full_name')
@@ -484,7 +514,7 @@ router.post('/:id/bids/:bidId/accept', authenticate, requireRole(['customer']), 
       truckInfo = data;
     }
 
-    // 6.4 Execute atomically via Supabase RPC
+    // 6.5 Execute atomically via Supabase RPC
     const { error: rpcErr } = await supabase.rpc('accept_bid_tx', {
       p_bid_id:           bidId,
       p_order_id:         orderId,

@@ -16,6 +16,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 
+const routeEstimateMock = vi.fn();
+
 // Hoisted mock: swap supabase out for our in-memory builder.
 const { createSupabaseMock } = await vi.importActual('../helpers/supabaseMock.js');
 
@@ -33,7 +35,12 @@ vi.mock('../../src/sockets/tracker.js', () => ({
   initWebSocketServer: () => ({}),
 }));
 
+vi.mock('../../src/services/osrm.js', () => ({
+  getRouteEstimate: routeEstimateMock,
+}));
+
 const { default: orderRouter } = await import('../../src/routes/orderRoutes.js');
+const { computeOrderPricing } = await import('../../src/lib/pricing.js');
 import express from 'express';
 
 function buildApp() {
@@ -84,6 +91,8 @@ describe('POST /api/orders — server-side pricing contract', () => {
     m.store.order_timeline = [];
     m.store.load_offers = [];
     m.calls.length = 0;
+    routeEstimateMock.mockReset();
+    routeEstimateMock.mockResolvedValue(null);
   });
 
   it('happy path: 201, server-computed pricing persisted, no client monetary field in store', async () => {
@@ -142,6 +151,36 @@ describe('POST /api/orders — server-side pricing contract', () => {
     // fuelCost + toll_cost + net_profit = baseFreight (the driver-side ledger invariant)
     expect(offerInsert.fuel_cost + offerInsert.toll_cost + offerInsert.net_profit)
       .toBe(offerInsert.freight_value);
+  });
+
+  it('uses OSRM road distance for persisted pricing when routing succeeds', async () => {
+    routeEstimateMock.mockResolvedValueOnce({ distanceKm: 1423.456, durationSeconds: 90000 });
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/orders')
+      .set(CUSTOMER_HEADERS)
+      .send(validOrderBody);
+
+    expect(res.status).toBe(201);
+    expect(routeEstimateMock).toHaveBeenCalledWith({
+      pickupLat: validOrderBody.pickup_lat,
+      pickupLng: validOrderBody.pickup_lng,
+      dropLat: validOrderBody.drop_lat,
+      dropLng: validOrderBody.drop_lng,
+    });
+
+    const orderInsert = m.calls.find(c => c.table === 'orders' && c.mode === 'insert').payload;
+    const straightLinePricing = computeOrderPricing({
+      pickupLat: validOrderBody.pickup_lat,
+      pickupLng: validOrderBody.pickup_lng,
+      dropLat: validOrderBody.drop_lat,
+      dropLng: validOrderBody.drop_lng,
+      weightTonnes: validOrderBody.weight_tonnes,
+    });
+
+    expect(orderInsert.base_freight).not.toBe(straightLinePricing.baseFreight);
+    expect(orderInsert.toll_estimate).toBe(Math.round(200 * 1423.456));
   });
 
   it('bad coordinates: NaN drop_lat → 400 with a clear pricing error', async () => {
@@ -226,5 +265,47 @@ describe('POST /api/orders/:id/bids — duplicate bid prevention', () => {
     expect(res.body).toEqual({ error: 'You already have a pending bid for this load.' });
     const bidInserts = m.calls.filter(c => c.table === 'load_bids' && c.mode === 'insert');
     expect(bidInserts).toHaveLength(0);
+  });
+});
+
+describe('POST /api/orders/:id/bids/:bidId/accept — bid ownership', () => {
+  beforeEach(() => {
+    m.store.orders = [];
+    m.store.load_offers = [];
+    m.store.load_bids = [];
+    m.store.profiles = [];
+    m.store.driver_details = [];
+    m.store.trucks = [];
+    m.calls.length = 0;
+  });
+
+  it('rejects a pending bid when it belongs to a different order load offer', async () => {
+    const app = buildApp();
+    m.store.orders.push({
+      id: 'order-owned',
+      order_display_id: 'ORDER-OWNED',
+      customer_id: CUSTOMER_HEADERS['x-user-id'],
+    });
+    m.store.load_offers.push({
+      id: 'load-owned',
+      order_display_id: 'ORDER-OWNED',
+      customer_id: CUSTOMER_HEADERS['x-user-id'],
+    });
+    m.store.load_bids.push({
+      id: 'bid-from-other-load',
+      load_id: 'load-other',
+      driver_id: 'driver-other',
+      bid_amount: 42000,
+      status: 'pending',
+    });
+
+    const res = await request(app)
+      .post('/api/orders/order-owned/bids/bid-from-other-load/accept')
+      .set(CUSTOMER_HEADERS)
+      .send();
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'Access Denied: Bid does not belong to this order.' });
+    expect(m.calls.some(c => c.rpc === 'accept_bid_tx')).toBe(false);
   });
 });
