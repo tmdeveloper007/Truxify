@@ -1,12 +1,31 @@
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/app_models.dart';
 import '../models/marketplace_models.dart';
 
 class MarketplaceRepository {
-  MarketplaceRepository({SupabaseClient? client}) : _client = client ?? Supabase.instance.client;
+  MarketplaceRepository({
+    SupabaseClient? client,
+    http.Client? httpClient,
+    String? apiBaseUrl,
+  })  : _client = client ?? Supabase.instance.client,
+        _httpClient = httpClient ?? http.Client(),
+        _apiBaseUrl = (apiBaseUrl ?? defaultApiBaseUrl).replaceFirst(
+          RegExp(r'/$'),
+          '',
+        );
+
+  static const String defaultApiBaseUrl = String.fromEnvironment(
+    'TRUXIFY_API_BASE_URL',
+    defaultValue: 'http://localhost:5000',
+  );
 
   final SupabaseClient _client;
+  final http.Client _httpClient;
+  final String _apiBaseUrl;
 
   Future<List<LoadOffer>> fetchLoadOffers() async {
     final rows = await _client
@@ -33,16 +52,28 @@ class MarketplaceRepository {
     required String driverId,
     required num amount,
   }) async {
-    final inserted = await _client
-        .from('load_bids')
-        .insert(<String, dynamic>{
-          'load_id': loadId,
-          'driver_id': driverId,
-          'bid_amount': (amount * 100).round(),
-        })
-        .select()
-        .single();
-    return DriverBid.fromJson(inserted);
+    final uri = Uri.parse('$_apiBaseUrl/api/orders/$loadId/bids');
+    final session = _client.auth.currentSession;
+    final accessToken = session?.accessToken;
+    final response = await _httpClient.post(
+      uri,
+      headers: <String, String>{
+        'Content-Type': 'application/json',
+        if (accessToken != null) 'Authorization': 'Bearer $accessToken',
+        'x-user-id': driverId,
+        'x-user-role': 'driver',
+      },
+      body: jsonEncode(<String, dynamic>{
+        'bid_amount': (amount * 100).round(),
+      }),
+    );
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(decoded['error']?.toString() ?? 'Failed to submit bid.');
+    }
+
+    return DriverBid.fromJson(Map<String, dynamic>.from(decoded['bid'] as Map));
   }
 
   Future<List<DriverBid>> fetchDriverBids({required String driverId}) async {
@@ -113,4 +144,3 @@ class MarketplaceRepository {
     return '₹$rounded';
   }
 }
-
