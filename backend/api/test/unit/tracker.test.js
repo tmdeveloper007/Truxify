@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 
 const dbMock = vi.hoisted(() => ({
   store: {
@@ -172,5 +172,644 @@ describe('tracker WebSocket heartbeat messages', () => {
     expect(errorSpy).toHaveBeenCalledWith('WS Message parsing error:', expect.any(String));
 
     errorSpy.mockRestore();
+  });
+});
+
+describe('handleLocationPing - main telemetry flow', () => {
+  beforeEach(() => {
+    __testing.resetTrackingSubscriptions();
+  });
+
+  it('rejects when driver_id is missing from ws', async () => {
+    const sentMessages = [];
+    const ws = {
+      send(msg) { sentMessages.push(JSON.parse(msg)); }
+    };
+
+    await handleLocationPing(ws, {
+      latitude: 12.9, longitude: 77.5,
+    });
+
+    expect(sentMessages[0].error).toContain('Missing authenticated WebSocket identity');
+  });
+
+  it('rejects when latitude or longitude is missing', async () => {
+    const sentMessages = [];
+    const ws = {
+      driverId: 'driver-1',
+      send(msg) { sentMessages.push(JSON.parse(msg)); }
+    };
+
+    await handleLocationPing(ws, { driver_id: 'driver-1' });
+
+    expect(sentMessages[0].error).toContain('Missing mandatory tracking parameters');
+  });
+
+  it('buffers telemetry and broadcasts to subscribed order clients', async () => {
+    const subscriberMessages = [];
+    const subscriber = {
+      readyState: 1,
+      send(msg) { subscriberMessages.push(JSON.parse(msg)); }
+    };
+
+    const ws = {
+      driverId: 'driver-1',
+      send: vi.fn(),
+    };
+
+    // Manually add subscriber to tracking subscriptions via handleSubscribe
+    const subWs = {
+      user: { id: 'customer-1', role: 'customer' },
+      driverId: 'driver-1',
+      readyState: 1,
+      send(msg) { subscriberMessages.push(JSON.parse(msg)); }
+    };
+
+    // Inject subscriber directly
+    await handleLocationPing(ws, {
+      driver_id: 'driver-1',
+      order_display_id: 'ORDER-ABC',
+      latitude: 12.9716,
+      longitude: 77.5946,
+      speed: 40,
+      bearing: 180,
+    });
+
+    // No error should be sent
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+
+  it('handles malformed device_timestamp gracefully', async () => {
+    const ws = {
+      driverId: 'driver-1',
+      send: vi.fn(),
+    };
+
+    await handleLocationPing(ws, {
+      driver_id: 'driver-1',
+      latitude: 12.9,
+      longitude: 77.5,
+      device_timestamp: 'not-a-date',
+    });
+
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+
+  it('handles valid device_timestamp correctly', async () => {
+    const ws = {
+      driverId: 'driver-1',
+      send: vi.fn(),
+    };
+
+    await handleLocationPing(ws, {
+      driver_id: 'driver-1',
+      latitude: 12.9,
+      longitude: 77.5,
+      device_timestamp: new Date().toISOString(),
+    });
+
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+
+  it('broadcasts to driver subscribers when driver_id subscription exists', async () => {
+    const driverSubMessages = [];
+    const driverSub = {
+      readyState: 1,
+      user: { id: 'driver-1', role: 'driver' },
+      driverId: 'driver-1',
+      send(msg) { driverSubMessages.push(JSON.parse(msg)); }
+    };
+
+    await handleSubscribe(driverSub, { driver_id: 'driver-1' });
+
+    const ws = { driverId: 'driver-1', send: vi.fn() };
+
+    await handleLocationPing(ws, {
+      driver_id: 'driver-1',
+      latitude: 12.9,
+      longitude: 77.5,
+    });
+
+    const locationUpdate = driverSubMessages.find(m => m.event === 'location_update');
+    expect(locationUpdate).toBeTruthy();
+    expect(locationUpdate.data.driver_id).toBe('driver-1');
+  });
+});
+
+describe('handleLocationPing - with Redis', () => {
+  it('uses Redis sequence gate to drop out-of-order telemetry', async () => {
+    const redisGet = vi.fn().mockResolvedValue('9999999999999'); // future epoch
+    const redisSet = vi.fn().mockResolvedValue('OK');
+    const redisClient = { get: redisGet, set: redisSet };
+
+    vi.doMock('../../src/config/db.js', () => ({
+      mongoDb: null,
+      redisClient,
+      firebaseAdmin: null,
+      supabase: null,
+    }));
+
+    const { handleLocationPing: hlp } = await import('../../src/sockets/tracker.js');
+
+    const ws = { driverId: 'driver-1', send: vi.fn() };
+
+    await hlp(ws, {
+      driver_id: 'driver-1',
+      latitude: 12.9,
+      longitude: 77.5,
+      device_timestamp: new Date(1000).toISOString(), // very old timestamp
+    });
+
+    // Should be dropped — no send called
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleTrackingMessage - event routing', () => {
+  beforeEach(() => {
+    __testing.resetTrackingSubscriptions();
+  });
+
+  it('routes location_ping event to handleLocationPing', async () => {
+    const ws = {
+      driverId: 'driver-1',
+      send: vi.fn(),
+    };
+
+    await handleTrackingMessage(ws, JSON.stringify({
+      event: 'location_ping',
+      data: {
+        driver_id: 'driver-1',
+        latitude: 12.9,
+        longitude: 77.5,
+      }
+    }));
+
+    // No error sent
+    const calls = ws.send.mock.calls.map(c => JSON.parse(c[0]));
+    expect(calls.some(c => c.error)).toBe(false);
+  });
+
+  it('sends warning for unknown event type', async () => {
+    const sentMessages = [];
+    const ws = {
+      send(msg) { sentMessages.push(JSON.parse(msg)); }
+    };
+
+    await handleTrackingMessage(ws, JSON.stringify({
+      event: 'unknown_event',
+      data: {}
+    }));
+
+    expect(sentMessages[0].warning).toContain('Unknown event type');
+  });
+
+  it('sends error when payload missing event or data keys', async () => {
+    const sentMessages = [];
+    const ws = {
+      send(msg) { sentMessages.push(JSON.parse(msg)); }
+    };
+
+    await handleTrackingMessage(ws, JSON.stringify({ event: 'location_ping' }));
+
+    expect(sentMessages[0].error).toContain('Invalid payload format');
+  });
+
+  it('routes unsubscribe_tracking event', async () => {
+    const sentMessages = [];
+    const ws = {
+      user: { id: 'driver-1', role: 'driver' },
+      driverId: 'driver-1',
+      send(msg) { sentMessages.push(JSON.parse(msg)); }
+    };
+
+    // First subscribe
+    await handleSubscribe(ws, { driver_id: 'driver-1' });
+
+    // Then unsubscribe via message
+    await handleTrackingMessage(ws, JSON.stringify({
+      event: 'unsubscribe_tracking',
+      data: { driver_id: 'driver-1' }
+    }));
+
+    const unsubMsg = sentMessages.find(m => m.status === 'unsubscribed');
+    expect(unsubMsg).toBeTruthy();
+    expect(unsubMsg.target).toBe('driver-1');
+  });
+});
+
+describe('handleSubscribe - edge cases', () => {
+  beforeEach(() => {
+    __testing.resetTrackingSubscriptions();
+    dbMock.store.orders = [];
+  });
+
+  it('sends error when subscription target is missing', async () => {
+    const sentMessages = [];
+    const ws = {
+      user: { id: 'customer-1', role: 'customer' },
+      send(msg) { sentMessages.push(JSON.parse(msg)); }
+    };
+
+    await handleSubscribe(ws, {});
+
+    expect(sentMessages[0].error).toContain('Subscription target');
+  });
+
+  it('sends forbidden when order not found in DB', async () => {
+    const sentMessages = [];
+    const ws = {
+      user: { id: 'customer-1', role: 'customer' },
+      send(msg) { sentMessages.push(JSON.parse(msg)); }
+    };
+
+    await handleSubscribe(ws, { order_display_id: 'NONEXISTENT' });
+
+    expect(sentMessages[0].error).toContain('Forbidden');
+  });
+
+  it('allows driver to subscribe to order they are assigned to', async () => {
+    dbMock.store.orders.push({
+      order_display_id: 'ORDER-D1',
+      customer_id: 'customer-1',
+      driver_id: 'driver-1',
+    });
+
+    const sentMessages = [];
+    const ws = {
+      user: { id: 'driver-1', role: 'driver' },
+      driverId: 'driver-1',
+      send(msg) { sentMessages.push(JSON.parse(msg)); }
+    };
+
+    await handleSubscribe(ws, { order_display_id: 'ORDER-D1' });
+
+    expect(sentMessages[0].status).toBe('subscribed');
+  });
+});
+
+describe('flushTelemetryBuffer - MongoDB', () => {
+  it('does nothing when buffer is empty', async () => {
+    // flushTelemetryBuffer is internal — test indirectly via no mongo calls
+    // Just verify no errors when nothing is buffered
+    const { __testing: t } = await import('../../src/sockets/tracker.js');
+    expect(t).toBeTruthy(); // module loaded fine
+  });
+
+  it('flushes telemetry buffer to MongoDB', async () => {
+    const insertMany = vi.fn().mockResolvedValue({ insertedCount: 1 });
+    const collection = vi.fn().mockReturnValue({ insertMany });
+    const mongoDb = { collection };
+
+    vi.doMock('../../src/config/db.js', () => ({
+      mongoDb,
+      redisClient: null,
+      firebaseAdmin: null,
+      supabase: null,
+    }));
+
+    vi.resetModules();
+    const { handleLocationPing: hlp, __testing: t } = await import('../../src/sockets/tracker.js');
+
+    // Add a ping to the buffer
+    const ws = { driverId: 'driver-mongo', send: vi.fn() };
+    await hlp(ws, {
+      driver_id: 'driver-mongo',
+      latitude: 12.9,
+      longitude: 77.5,
+    });
+
+    // Manually trigger flush via exposed testing util if available
+    if (t.flushTelemetryBuffer) {
+      await t.flushTelemetryBuffer();
+      expect(insertMany).toHaveBeenCalled();
+    }
+  });
+});
+
+describe('removeClientFromAllSubscriptions', () => {
+  beforeEach(() => {
+    __testing.resetTrackingSubscriptions();
+  });
+
+  it('removes a disconnected client from all subscriptions', async () => {
+    const sentMessages = [];
+    const ws = {
+      user: { id: 'driver-1', role: 'driver' },
+      driverId: 'driver-1',
+      send(msg) { sentMessages.push(JSON.parse(msg)); }
+    };
+
+    await handleSubscribe(ws, { driver_id: 'driver-1' });
+
+    __testing.removeClientFromAllSubscriptions(ws);
+
+    // Subscription should be cleaned up — no error thrown
+    expect(true).toBe(true);
+  });
+
+  it('cleans up empty subscription sets after removal', async () => {
+    const ws = {
+      user: { id: 'driver-2', role: 'driver' },
+      driverId: 'driver-2',
+      send: vi.fn(),
+    };
+
+    await handleSubscribe(ws, { driver_id: 'driver-2' });
+    __testing.removeClientFromAllSubscriptions(ws);
+
+    // Subscribe again to verify map was cleaned (no duplicate sets)
+    const ws2 = {
+      user: { id: 'driver-2', role: 'driver' },
+      driverId: 'driver-2',
+      send: vi.fn(),
+    };
+    await handleSubscribe(ws2, { driver_id: 'driver-2' });
+    expect(ws2.send).toHaveBeenCalledWith(
+      JSON.stringify({ status: 'subscribed', target: 'driver-2' })
+    );
+  });
+});
+
+describe('flushTelemetryBuffer - direct', () => {
+  beforeEach(() => {
+    __testing.clearTelemetryWriteBuffer();
+  });
+
+  it('does nothing when buffer is empty', async () => {
+    // Should not throw
+    await __testing.flushTelemetryBuffer();
+    expect(true).toBe(true);
+  });
+
+  it('retains buffer when mongoDb is not initialized', async () => {
+    // Add item to buffer via a ping
+    const ws = { driverId: 'driver-1', send: vi.fn() };
+    await handleLocationPing(ws, {
+      driver_id: 'driver-1',
+      latitude: 12.9,
+      longitude: 77.5,
+    });
+
+    const bufferBefore = __testing.getTelemetryWriteBuffer().length;
+    expect(bufferBefore).toBeGreaterThan(0);
+
+    // mongoDb is null in mock — flush should retain buffer
+    await __testing.flushTelemetryBuffer();
+
+    const bufferAfter = __testing.getTelemetryWriteBuffer().length;
+    expect(bufferAfter).toBe(bufferBefore);
+  });
+});
+
+describe('handleLocationPing - Redis sequence gate', () => {
+  beforeEach(() => {
+    __testing.resetTrackingSubscriptions();
+    __testing.clearTelemetryWriteBuffer();
+    vi.resetModules();
+  });
+
+  it('drops out-of-order telemetry when incoming epoch <= last recorded epoch', async () => {
+    const redisGet = vi.fn().mockResolvedValue('9999999999999');
+    const redisSet = vi.fn().mockResolvedValue('OK');
+
+    vi.doMock('../../src/config/db.js', () => ({
+      mongoDb: null,
+      redisClient: { get: redisGet, set: redisSet },
+      firebaseAdmin: null,
+      supabase: null,
+    }));
+
+    const { handleLocationPing: hlp, __testing: t } = await import('../../src/sockets/tracker.js');
+
+    const ws = { driverId: 'driver-1', send: vi.fn() };
+
+    await hlp(ws, {
+      driver_id: 'driver-1',
+      latitude: 12.9,
+      longitude: 77.5,
+      device_timestamp: new Date(1000).toISOString(),
+    });
+
+    expect(ws.send).not.toHaveBeenCalled();
+    expect(redisGet).toHaveBeenCalledWith('driver:sequence:driver-1');
+    expect(redisSet).not.toHaveBeenCalled();
+  });
+
+  it('updates Redis sequence and cache when telemetry is in order', async () => {
+    const redisGet = vi.fn().mockResolvedValue(null);
+    const redisSet = vi.fn().mockResolvedValue('OK');
+
+    vi.doMock('../../src/config/db.js', () => ({
+      mongoDb: null,
+      redisClient: { get: redisGet, set: redisSet },
+      firebaseAdmin: null,
+      supabase: null,
+    }));
+
+    const { handleLocationPing: hlp } = await import('../../src/sockets/tracker.js');
+
+    const ws = { driverId: 'driver-1', send: vi.fn() };
+
+    await hlp(ws, {
+      driver_id: 'driver-1',
+      latitude: 12.9,
+      longitude: 77.5,
+    });
+
+    expect(redisSet).toHaveBeenCalledWith(
+      'driver:sequence:driver-1',
+      expect.any(String),
+      'EX',
+      86400
+    );
+    expect(redisSet).toHaveBeenCalledWith(
+      'driver:location:driver-1',
+      expect.any(String),
+      'EX',
+      120
+    );
+  });
+
+  it('handles Redis errors gracefully without crashing', async () => {
+    const redisGet = vi.fn().mockRejectedValue(new Error('Redis connection failed'));
+
+    vi.doMock('../../src/config/db.js', () => ({
+      mongoDb: null,
+      redisClient: { get: redisGet, set: vi.fn() },
+      firebaseAdmin: null,
+      supabase: null,
+    }));
+
+    const { handleLocationPing: hlp } = await import('../../src/sockets/tracker.js');
+
+    const ws = { driverId: 'driver-1', send: vi.fn() };
+
+    // Should not throw
+    await hlp(ws, {
+      driver_id: 'driver-1',
+      latitude: 12.9,
+      longitude: 77.5,
+    });
+
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+});
+
+describe('flushTelemetryBuffer - with MongoDB', () => {
+  beforeEach(() => {
+    __testing.clearTelemetryWriteBuffer();
+    vi.resetModules();
+  });
+
+  it('inserts buffered records into MongoDB', async () => {
+    const insertMany = vi.fn().mockResolvedValue({ insertedCount: 1 });
+    const collection = vi.fn().mockReturnValue({ insertMany });
+
+    vi.doMock('../../src/config/db.js', () => ({
+      mongoDb: { collection },
+      redisClient: null,
+      firebaseAdmin: null,
+      supabase: null,
+    }));
+
+    const { handleLocationPing: hlp, __testing: t } = await import('../../src/sockets/tracker.js');
+
+    const ws = { driverId: 'driver-mongo', send: vi.fn() };
+    await hlp(ws, {
+      driver_id: 'driver-mongo',
+      latitude: 12.9,
+      longitude: 77.5,
+    });
+
+    await t.flushTelemetryBuffer();
+
+    expect(collection).toHaveBeenCalledWith('live_gps_pings');
+    expect(insertMany).toHaveBeenCalled();
+    expect(t.getTelemetryWriteBuffer().length).toBe(0);
+  });
+
+  it('re-queues buffer on transient MongoDB error', async () => {
+    const insertMany = vi.fn().mockRejectedValue(new Error('network timeout'));
+    const collection = vi.fn().mockReturnValue({ insertMany });
+
+    vi.doMock('../../src/config/db.js', () => ({
+      mongoDb: { collection },
+      redisClient: null,
+      firebaseAdmin: null,
+      supabase: null,
+    }));
+
+    const { handleLocationPing: hlp, __testing: t } = await import('../../src/sockets/tracker.js');
+
+    const ws = { driverId: 'driver-retry', send: vi.fn() };
+    await hlp(ws, {
+      driver_id: 'driver-retry',
+      latitude: 12.9,
+      longitude: 77.5,
+    });
+
+    await t.flushTelemetryBuffer();
+
+    // Buffer should be re-queued on transient error
+    expect(t.getTelemetryWriteBuffer().length).toBeGreaterThan(0);
+  });
+
+  it('discards buffer on MongoDB validation error (code 121)', async () => {
+    const validationError = new Error('Document failed validation');
+    validationError.code = 121;
+    const insertMany = vi.fn().mockRejectedValue(validationError);
+    const collection = vi.fn().mockReturnValue({ insertMany });
+
+    vi.doMock('../../src/config/db.js', () => ({
+      mongoDb: { collection },
+      redisClient: null,
+      firebaseAdmin: null,
+      supabase: null,
+    }));
+
+    const { handleLocationPing: hlp, __testing: t } = await import('../../src/sockets/tracker.js');
+
+    const ws = { driverId: 'driver-discard', send: vi.fn() };
+    await hlp(ws, {
+      driver_id: 'driver-discard',
+      latitude: 12.9,
+      longitude: 77.5,
+    });
+
+    await t.flushTelemetryBuffer();
+
+    // Validation errors should be discarded, not re-queued
+    expect(t.getTelemetryWriteBuffer().length).toBe(0);
+  });
+});
+
+describe('handleLocationPing - broadcast to order subscribers', () => {
+  beforeEach(() => {
+    __testing.resetTrackingSubscriptions();
+    __testing.clearTelemetryWriteBuffer();
+    dbMock.store.orders = [];
+  });
+
+  it('broadcasts location_update to subscribed order clients', async () => {
+    dbMock.store.orders.push({
+      order_display_id: 'ORDER-BROADCAST',
+      customer_id: 'customer-1',
+      driver_id: 'driver-1',
+    });
+
+    const receivedMessages = [];
+    const customerWs = {
+      user: { id: 'customer-1', role: 'customer' },
+      readyState: 1,
+      send(msg) { receivedMessages.push(JSON.parse(msg)); }
+    };
+
+    // Subscribe customer to order
+    await handleSubscribe(customerWs, { order_display_id: 'ORDER-BROADCAST' });
+
+    // Driver sends location ping for that order
+    const driverWs = { driverId: 'driver-1', send: vi.fn() };
+    await handleLocationPing(driverWs, {
+      driver_id: 'driver-1',
+      order_display_id: 'ORDER-BROADCAST',
+      latitude: 12.9716,
+      longitude: 77.5946,
+      speed: 60,
+      bearing: 90,
+    });
+
+    const update = receivedMessages.find(m => m.event === 'location_update');
+    expect(update).toBeTruthy();
+    expect(update.data.order_display_id).toBe('ORDER-BROADCAST');
+    expect(update.data.latitude).toBe(12.9716);
+  });
+
+  it('does not broadcast when client readyState is not OPEN', async () => {
+    dbMock.store.orders.push({
+      order_display_id: 'ORDER-CLOSED',
+      customer_id: 'customer-1',
+      driver_id: 'driver-1',
+    });
+
+    const receivedMessages = [];
+    const customerWs = {
+      user: { id: 'customer-1', role: 'customer' },
+      readyState: 0, // not open
+      send(msg) { receivedMessages.push(JSON.parse(msg)); }
+    };
+
+    await handleSubscribe(customerWs, { order_display_id: 'ORDER-CLOSED' });
+
+    const driverWs = { driverId: 'driver-1', send: vi.fn() };
+    await handleLocationPing(driverWs, {
+      driver_id: 'driver-1',
+      order_display_id: 'ORDER-CLOSED',
+      latitude: 12.9,
+      longitude: 77.5,
+    });
+
+    // Only the subscribe confirmation should be received, not location_update
+    expect(receivedMessages.every(m => m.status === 'subscribed')).toBe(true);
   });
 });

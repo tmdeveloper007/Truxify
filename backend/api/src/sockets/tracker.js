@@ -412,4 +412,12 @@ export const __testing = {
   resetTrackingSubscriptions() {
     trackingSubscriptions.clear();
   },
+  flushTelemetryBuffer,
+  removeClientFromAllSubscriptions,
+  getTelemetryWriteBuffer() {
+    return telemetryWriteBuffer;
+  },
+  clearTelemetryWriteBuffer() {
+    telemetryWriteBuffer = [];
+  },
 };

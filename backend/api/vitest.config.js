@@ -20,7 +20,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
       include: ['src/**/*.js'],
-      exclude: ['src/index.js', 'src/config/db.js', 'src/sockets/**'],
+      exclude: ['src/index.js', 'src/config/db.js'],
     },
   },
 });

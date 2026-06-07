@@ -215,4 +215,91 @@ describe('Driver Routes', () => {
 
     expect(rpcCall).toBeTruthy();
   });
+  
+  it('PUT /online updates driver status successfully', async () => {
+    m.programData({ is_online: true });
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .put('/api/drivers/online')
+      .set(DRIVER_HEADERS)
+      .send({ is_online: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toContain('online');
+  });
+
+  it('PUT /online returns 500 on DB error', async () => {
+    m.programError('update failed');
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .put('/api/drivers/online')
+      .set(DRIVER_HEADERS)
+      .send({ is_online: true });
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /wallet/history returns 500 on DB error', async () => {
+    m.programError('db failure');
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .get('/api/drivers/wallet/history')
+      .set(DRIVER_HEADERS);
+
+    expect(res.status).toBe(500);
+  });
+
+  it('GET /earnings/summary returns 500 on DB error', async () => {
+    m.programError('db failure');
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .get('/api/drivers/earnings/summary')
+      .set(DRIVER_HEADERS);
+
+    expect(res.status).toBe(500);
+  });
+
+  it('POST /wallet/withdraw returns 404 when driver profile not found', async () => {
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/drivers/wallet/withdraw')
+      .set(DRIVER_HEADERS)
+      .send({ amount: 1000 });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /wallet/withdraw returns 400 when RPC fails', async () => {
+    m.store.driver_details.push({
+      user_id: 'driver-1',
+      wallet_confirmed: 10000,
+    });
+
+    const originalRpc = m.supabase.rpc.bind(m.supabase);
+    m.supabase.rpc = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: 'Withdrawal failed.' },
+    });
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/drivers/wallet/withdraw')
+      .set(DRIVER_HEADERS)
+      .send({ amount: 1000 });
+
+    m.supabase.rpc = originalRpc;
+
+    expect(res.status).toBe(400);
+  });
+  
 });

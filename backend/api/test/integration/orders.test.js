@@ -284,6 +284,20 @@ describe('POST /api/orders — server-side pricing contract', () => {
 
     expect(res.status).toBe(403);
   });
+
+  it('returns 500 when orders insert fails', async () => {
+    routeEstimateMock.mockResolvedValue(null);
+    m.programError('insert failed');
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/orders')
+      .set(CUSTOMER_HEADERS)
+      .send(validOrderBody);
+
+    expect(res.status).toBe(500);
+  });
 });
 
 describe('POST /api/orders/:id/bids — duplicate bid prevention', () => {
@@ -358,5 +372,344 @@ describe('POST /api/orders/:id/bids/:bidId/accept — bid ownership', () => {
     expect(res.status).toBe(403);
     expect(res.body).toEqual({ error: 'Access Denied: Bid does not belong to this order.' });
     expect(m.calls.some(c => c.rpc === 'accept_bid_tx')).toBe(false);
+  });
+
+  it('returns 404 when load offer for order not found', async () => {
+    m.store.orders.push({
+      id: 'order-1',
+      order_display_id: 'OD-NOOFFER',
+      customer_id: CUSTOMER_HEADERS['x-user-id'],
+    });
+
+    m.store.load_bids.push({
+      id: 'bid-1',
+      load_id: 'load-1',
+      driver_id: 'driver-1',
+      bid_amount: 50000,
+      status: 'pending',
+    });
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/orders/order-1/bids/bid-1/accept')
+      .set(CUSTOMER_HEADERS);
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /api/orders/history — order history', () => {
+  beforeEach(() => {
+    m.store.orders = [];
+    m.calls.length = 0;
+  });
+
+  it('returns order history for customer', async () => {
+    m.store.orders.push({
+      id: 'order-1',
+      customer_id: CUSTOMER_HEADERS['x-user-id'],
+      status: 'pending',
+      created_at: '2026-06-01',
+    });
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .get('/api/orders/history')
+      .set(CUSTOMER_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  it('returns 500 on DB error', async () => {
+    m.programError('db failure');
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .get('/api/orders/history')
+      .set(CUSTOMER_HEADERS);
+
+    expect(res.status).toBe(500);
+  });
+});
+
+describe('GET /api/orders/:id — order details', () => {
+  beforeEach(() => {
+    m.store.orders = [];
+    m.store.order_timeline = [];
+    m.store.profiles = [];
+    m.store.driver_details = [];
+    m.calls.length = 0;
+  });
+
+  it('returns 404 when order not found', async () => {
+    const app = buildApp();
+
+    const res = await request(app)
+      .get('/api/orders/nonexistent-id')
+      .set(CUSTOMER_HEADERS);
+
+    expect(res.status).toBe(404);
+  });
+
+  it('returns 403 when user does not own the order', async () => {
+    m.store.orders.push({
+      id: 'order-1',
+      customer_id: 'someone-else',
+      driver_id: null,
+      order_display_id: 'OD1',
+    });
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .get('/api/orders/order-1')
+      .set(CUSTOMER_HEADERS);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('returns order details with timeline for owner', async () => {
+    m.store.orders.push({
+      id: 'order-1',
+      customer_id: CUSTOMER_HEADERS['x-user-id'],
+      driver_id: null,
+      order_display_id: 'OD1',
+    });
+
+    m.store.order_timeline.push({
+      order_display_id: 'OD1',
+      milestone: 'Order Placed',
+      completed: true,
+      sort_order: 10,
+    });
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .get('/api/orders/order-1')
+      .set(CUSTOMER_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.order.id).toBe('order-1');
+    expect(Array.isArray(res.body.timeline)).toBe(true);
+  });
+
+  it('returns order details with driver profile when driver assigned', async () => {
+    m.store.orders.push({
+      id: 'order-2',
+      customer_id: CUSTOMER_HEADERS['x-user-id'],
+      driver_id: 'driver-1',
+      order_display_id: 'OD2',
+    });
+
+    m.store.profiles.push({
+      id: 'driver-1',
+      full_name: 'Test Driver',
+      phone: '9999999999',
+      avatar_url: null,
+    });
+
+    m.store.driver_details.push({
+      user_id: 'driver-1',
+      rating: 4.8,
+      total_trips: 30,
+    });
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .get('/api/orders/order-2')
+      .set(CUSTOMER_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.driver.name).toBe('Test Driver');
+  });
+
+  it('returns 500 on DB error', async () => {
+    m.programError('db failure');
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .get('/api/orders/order-1')
+      .set(CUSTOMER_HEADERS);
+
+    expect(res.status).toBe(500);
+  });
+});
+
+describe('POST /api/orders — missing required fields', () => {
+  beforeEach(() => {
+    m.store.orders = [];
+    m.calls.length = 0;
+    routeEstimateMock.mockReset();
+  });
+
+  it('returns 400 when required fields are missing', async () => {
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/orders')
+      .set(CUSTOMER_HEADERS)
+      .send({ pickup_address: '123 St' }); // missing most required fields
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('Missing required');
+  });
+});
+
+describe('PUT /api/orders/:id/milestones — edge cases', () => {
+  beforeEach(() => {
+    m.store.orders = [];
+    m.store.order_timeline = [];
+    m.calls.length = 0;
+  });
+
+  it('returns 400 for invalid milestone', async () => {
+    const app = buildApp();
+
+    const res = await request(app)
+      .put('/api/orders/order-1/milestones')
+      .set(DRIVER_HEADERS)
+      .send({ milestone: 'Invalid Milestone' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 404 when order not found', async () => {
+    const app = buildApp();
+
+    const res = await request(app)
+      .put('/api/orders/nonexistent/milestones')
+      .set(DRIVER_HEADERS)
+      .send({ milestone: 'Goods Loaded' });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('returns 500 when order update fails', async () => {
+    m.store.orders.push({
+      id: 'order-1',
+      driver_id: DRIVER_HEADERS['x-user-id'],
+      order_display_id: 'OD1',
+    });
+
+    const originalFrom = m.supabase.from.bind(m.supabase);
+    m.supabase.from = (table) => {
+      const builder = originalFrom(table);
+      if (table === 'orders') {
+        const originalUpdate = builder.update.bind(builder);
+        builder.update = (payload) => {
+          const b = originalUpdate(payload);
+          b._exec = async () => ({ data: null, error: { message: 'update failed' } });
+          return b;
+        };
+      }
+      return builder;
+    };
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .put('/api/orders/order-1/milestones')
+      .set(DRIVER_HEADERS)
+      .send({ milestone: 'Goods Loaded' });
+
+    m.supabase.from = originalFrom;
+
+    expect(res.status).toBe(500);
+  });
+  
+});
+
+describe('GET /api/orders/:id/bids — bids query error', () => {
+  beforeEach(() => {
+    m.store.orders = [];
+    m.store.load_offers = [];
+    m.store.load_bids = [];
+    m.calls.length = 0;
+  });
+
+  it('returns 500 when bids query fails', async () => {
+    m.store.orders.push({
+      id: 'order-1',
+      customer_id: CUSTOMER_HEADERS['x-user-id'],
+      order_display_id: 'OD1',
+    });
+
+    m.store.load_offers.push({
+      id: 'load-1',
+      order_display_id: 'OD1',
+    });
+
+    const originalFrom = m.supabase.from.bind(m.supabase);
+    m.supabase.from = (table) => {
+      const builder = originalFrom(table);
+      if (table === 'load_bids') {
+        builder._exec = async () => ({ data: null, error: { message: 'bids query failed' } });
+      }
+      return builder;
+    };
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .get('/api/orders/order-1/bids')
+      .set(CUSTOMER_HEADERS);
+
+    m.supabase.from = originalFrom;
+
+    expect(res.status).toBe(500);
+  });
+});
+
+describe('PUT /api/orders/:id/milestones — timeline update error', () => {
+  beforeEach(() => {
+    m.store.orders = [];
+    m.store.order_timeline = [];
+    m.calls.length = 0;
+  });
+
+  it('returns 500 when timeline update fails', async () => {
+    m.store.orders.push({
+      id: 'order-1',
+      driver_id: DRIVER_HEADERS['x-user-id'],
+      order_display_id: 'OD1',
+    });
+
+    m.store.order_timeline.push({
+      order_display_id: 'OD1',
+      milestone: 'In Transit',
+      completed: false,
+    });
+
+    const originalFrom = m.supabase.from.bind(m.supabase);
+    m.supabase.from = (table) => {
+      const builder = originalFrom(table);
+      if (table === 'order_timeline') {
+        const originalUpdate = builder.update.bind(builder);
+        builder.update = (payload) => {
+          const b = originalUpdate(payload);
+          b._exec = async () => ({ data: null, error: { message: 'timeline update failed' } });
+          return b;
+        };
+      }
+      return builder;
+    };
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .put('/api/orders/order-1/milestones')
+      .set(DRIVER_HEADERS)
+      .send({ milestone: 'In Transit' });
+
+    m.supabase.from = originalFrom;
+
+    expect(res.status).toBe(500);
   });
 });
