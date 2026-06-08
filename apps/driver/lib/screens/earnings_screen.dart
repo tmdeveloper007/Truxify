@@ -775,12 +775,10 @@ class _EarningsScreenState extends State<EarningsScreen> {
                 children: [
                   IconButton(
                     onPressed: _prevMonth,
-                    icon: Icon(
+                    icon: const Icon(
                       Icons.chevron_left_rounded,
                       size: 20,
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? Colors.black
-                          : Colors.white,
+                      color: Colors.black,
                     ),
                     visualDensity: VisualDensity.compact,
                     style: IconButton.styleFrom(
@@ -799,12 +797,10 @@ class _EarningsScreenState extends State<EarningsScreen> {
                   const SizedBox(width: 8),
                   IconButton(
                     onPressed: _nextMonth,
-                    icon: Icon(
+                    icon: const Icon(
                       Icons.chevron_right_rounded,
                       size: 20,
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? Colors.black
-                          : Colors.white,
+                      color: Colors.black,
                     ),
                     visualDensity: VisualDensity.compact,
                     style: IconButton.styleFrom(
