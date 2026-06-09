@@ -35,3 +35,11 @@ export const submitBidSchema = z.object({
 export const driverOnlineSchema = z.object({
   is_online: z.boolean(),
 }).passthrough();
+
+export const withdrawSchema = z.object({
+  amount: z
+    .number()
+    .int({ message: 'Amount must be a whole number (paisa)' })
+    .positive({ message: 'Amount must be greater than 0' })
+    .safe({ message: 'Amount is too large' }),
+}).passthrough();
