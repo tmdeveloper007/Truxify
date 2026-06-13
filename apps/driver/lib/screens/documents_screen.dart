@@ -32,13 +32,18 @@ class DriverDocument {
     final status = map['status'] as String? ?? 'pending';
 
     return DriverDocument(
-      id: map['id'] as String,
+      id: map['id']?.toString() ?? '',
       title: _docTypeLabel(docType),
       subtitle: _docTypeSubtitle(docType),
-      docNumber: (map['id'] as String).substring(0, 8).toUpperCase(),
+      docNumber: () {
+        final rawId = map['id']?.toString() ?? '';
+        return rawId.length >= 8
+            ? rawId.substring(0, 8).toUpperCase()
+            : rawId.toUpperCase();
+      }(),
       lastVerified: _formatDate(map['last_verified_at'] as String?),
       validUntil: _formatDate(map['valid_until'] as String?),
-      statusTone: status == 'expiring_soon' ? 'warning' : 'verified',
+      statusTone: _statusTone(status),
       statusLabel: 'Document No.',
     );
   }
@@ -82,6 +87,18 @@ class DriverDocument {
       return raw;
     }
   }
+
+  static String _statusTone(String status) {
+    switch (status) {
+      case 'expiring_soon':
+      case 'expired':
+        return 'warning';
+      case 'verified':
+        return 'verified';
+      default:
+        return 'pending';
+    }
+  }
 }
 
 class DocumentsScreen extends StatefulWidget {
@@ -107,7 +124,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     final driverId = DriverSession.driverId;
 
     if (driverId.isEmpty) {
-      throw const AuthException('No authenticated user. Please log in again.');
+      throw AuthException('No authenticated user. Please log in again.');
     }
 
     final response = await _supabase
@@ -132,7 +149,6 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     );
     return false;
   }
-
 
   Future<void> _simulateUpload(BuildContext context, String docType) async {
     if (!_requireAuth(context)) return;
@@ -603,7 +619,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                       Text(
                         isAuthError
                             ? 'Please log in again to view your documents.'
-                            : snapshot.error.toString(),
+                            : 'Something went wrong. Please try again later.',
                         style: GoogleFonts.dmSans(
                           fontSize: 13,
                           color: TruxifyColors.secondaryText,
@@ -614,8 +630,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                         const SizedBox(height: 24),
                         PrimaryButton(
                           label: 'Go to Login',
-                          onPressed: () =>
-                              Navigator.of(context).pushReplacementNamed('/login'),
+                          onPressed: () => Navigator.of(context)
+                              .pushReplacementNamed('/login'),
                         ),
                       ],
                     ],
@@ -775,7 +791,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                                         SnackBar(
                                           content: Text(
                                               '${document.title} re-verification request sent to RTO Node.'),
-                                          backgroundColor: TruxifyColors.success,
+                                          backgroundColor:
+                                              TruxifyColors.success,
                                         ),
                                       );
                                     }
