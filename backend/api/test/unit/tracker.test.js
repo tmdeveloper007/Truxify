@@ -190,14 +190,15 @@ describe('tracker graceful shutdown', () => {
   });
 
   it('flushes telemetry without dropping buffered records when MongoDB is unavailable', async () => {
-    const telemetryInterval = setInterval(() => {}, 1000);
+    const telemetryInterval = setTimeout(() => {}, 1000);
     const heartbeatInterval = setInterval(() => {}, 1000);
     const client = { close: vi.fn() };
     const server = {
       clients: new Set([client]),
       close: vi.fn((callback) => callback()),
     };
-    const clearSpy = vi.spyOn(global, 'clearInterval');
+    const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
+    const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     __testing.setTelemetryWriteBuffer([{ driver_id: 'driver-1' }]);
@@ -209,8 +210,8 @@ describe('tracker graceful shutdown', () => {
 
     await closeWebSocketServer();
 
-    expect(clearSpy).toHaveBeenCalledWith(telemetryInterval);
-    expect(clearSpy).toHaveBeenCalledWith(heartbeatInterval);
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(telemetryInterval);
+    expect(clearIntervalSpy).toHaveBeenCalledWith(heartbeatInterval);
     expect(client.close).toHaveBeenCalledWith(1001, 'Server shutting down');
     expect(server.close).toHaveBeenCalled();
     expect(__testing.getTelemetryWriteBuffer()).toHaveLength(1);
@@ -221,7 +222,8 @@ describe('tracker graceful shutdown', () => {
       hasWsHeartbeatInterval: false,
     });
 
-    clearSpy.mockRestore();
+    clearIntervalSpy.mockRestore();
+    clearTimeoutSpy.mockRestore();
     errorSpy.mockRestore();
   });
 
@@ -903,7 +905,12 @@ describe('flushTelemetryBuffer - with MongoDB', () => {
   });
 
   it('re-queues buffer on transient MongoDB error', async () => {
-    const insertMany = vi.fn().mockRejectedValue(new Error('network timeout'));
+    const insertMany = vi.fn().mockImplementation(async () => {
+      // Simulate a concurrent new ping arriving while DB write is active
+      const { __testing: t } = await import('../../src/sockets/tracker.js');
+      t.setTelemetryWriteBuffer([{ driver_id: 'new-driver' }]);
+      throw new Error('network timeout');
+    });
     const collection = vi.fn().mockReturnValue({ insertMany });
 
     vi.doMock('../../src/config/db.js', () => ({
@@ -913,19 +920,16 @@ describe('flushTelemetryBuffer - with MongoDB', () => {
       supabase: null,
     }));
 
-    const { handleLocationPing: hlp, __testing: t } = await import('../../src/sockets/tracker.js');
-
-    const ws = { driverId: 'driver-retry', send: vi.fn() };
-    await hlp(ws, {
-      driver_id: 'driver-retry',
-      latitude: 12.9,
-      longitude: 77.5,
-    });
+    const { __testing: t } = await import('../../src/sockets/tracker.js');
+    t.setTelemetryWriteBuffer([{ driver_id: 'old-driver' }]);
 
     await t.flushTelemetryBuffer();
 
-    // Buffer should be re-queued on transient error
-    expect(t.getTelemetryWriteBuffer().length).toBeGreaterThan(0);
+    // Failed records (old-driver) must be prepended and new records (new-driver) appended
+    const buffer = t.getTelemetryWriteBuffer();
+    expect(buffer).toHaveLength(2);
+    expect(buffer[0].driver_id).toBe('old-driver');
+    expect(buffer[1].driver_id).toBe('new-driver');
   });
 
   it('discards buffer on MongoDB validation error (code 121)', async () => {

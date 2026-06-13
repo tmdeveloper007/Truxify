@@ -16,7 +16,7 @@ let telemetryWriteBuffer = [];
 const BUFFER_FLUSH_INTERVAL_MS = 20000;
 let flushBackoffMs = 1000;
 let isSchedulerActive = false;
-let telemetryFlushInterval = null;
+let telemetryFlushTimeout = null;
 let wsServer = null;
 let wsHeartbeatInterval = null;
 let telemetryMonitorInterval = null;
@@ -454,7 +454,7 @@ async function flushTelemetryBuffer() {
       if (droppedCount > 0) {
         console.warn(`[TRUXIFY BUFFER DROP] Buffer full: dropped ${droppedCount} oldest records from retry batch.`);
       }
-      telemetryWriteBuffer = [...telemetryWriteBuffer, ...recordsToKeep];
+      telemetryWriteBuffer = [...recordsToKeep, ...telemetryWriteBuffer];
     }
   }
 }
@@ -474,20 +474,31 @@ function monitorBufferSize() {
   }
 }
 
+function scheduleNextFlush() {
+  if (!isSchedulerActive) return;
+
+  telemetryFlushTimeout = setTimeout(async () => {
+    try {
+      await flushTelemetryBuffer();
+    } finally {
+      scheduleNextFlush();
+    }
+  }, Math.max(BUFFER_FLUSH_INTERVAL_MS, flushBackoffMs));
+}
+
 function initTelemetryScheduler() {
   isSchedulerActive = true;
-  telemetryFlushInterval = setInterval(async () => {
-    await flushTelemetryBuffer();
-  }, Math.max(BUFFER_FLUSH_INTERVAL_MS, flushBackoffMs));
+  scheduleNextFlush();
+  
   telemetryMonitorInterval = setInterval(() => {
     monitorBufferSize();
   }, BUFFER_MONITOR_INTERVAL_MS);
 }
 
 export async function closeWebSocketServer() {
-  if (telemetryFlushInterval) {
-    clearInterval(telemetryFlushInterval);
-    telemetryFlushInterval = null;
+  if (telemetryFlushTimeout) {
+    clearTimeout(telemetryFlushTimeout);
+    telemetryFlushTimeout = null;
     isSchedulerActive = false;
   }
 
@@ -633,13 +644,13 @@ export const __testing = {
   getShutdownState() {
     return {
       isSchedulerActive,
-      hasTelemetryFlushInterval: Boolean(telemetryFlushInterval),
+      hasTelemetryFlushInterval: Boolean(telemetryFlushTimeout),
       hasWebSocketServer: Boolean(wsServer),
       hasWsHeartbeatInterval: Boolean(wsHeartbeatInterval),
     };
   },
   setShutdownState({ telemetryInterval = null, heartbeatInterval = null, server = null } = {}) {
-    telemetryFlushInterval = telemetryInterval;
+    telemetryFlushTimeout = telemetryInterval;
     wsHeartbeatInterval = heartbeatInterval;
     wsServer = server;
     isSchedulerActive = Boolean(telemetryInterval);
