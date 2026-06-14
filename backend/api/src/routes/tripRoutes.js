@@ -9,26 +9,26 @@ const router = express.Router();
 // 🛡️ OFFLINE SYNC VALIDATION SCHEMAS (ISSUE #362)
 // ============================================================================
 
-// Per-event-type payload validation (no OTP in otpDelivery, validated coords in gpsUpdate)
-// Unknown event types pass through with generic payload — only known sensitive types are restricted
+// Per-event-type payload validation
+// otpDelivery events are strictly validated — only stopId allowed, no otp field
+// All other event types pass through with generic payload validation
 const otpDeliveryPayloadSchema = z.object({
   stopId: z.string().min(1),
 }).strict();
 
-const eventPayloadSchema = z.union([
-  z.object({ type: z.literal('otpDelivery'), payload: otpDeliveryPayloadSchema }),
-  z.object({ type: z.literal('gpsUpdate'), payload: z.object({
-    lat: z.number().min(-90).max(90),
-    lng: z.number().min(-180).max(180),
-    timestampMs: z.number().int().positive().optional(),
-  }) }),
-  z.object({ type: z.literal('stopArrival'), payload: z.object({ stopId: z.string().min(1) }) }),
-  z.object({ type: z.literal('tripStart'), payload: z.object({ tripId: z.string().min(1) }) }),
-  z.object({ type: z.literal('tripEnd'), payload: z.object({ tripId: z.string().min(1) }) }),
-  z.object({ type: z.literal('podMetadata'), payload: z.record(z.any()) }),
-  // Catch-all for any other event types — validate payload is a JSON object, no further restrictions
-  z.object({ type: z.string(), payload: z.record(z.any()) }),
-]);
+function validateEventPayload(type, payload) {
+  if (type === 'otpDelivery') {
+    return otpDeliveryPayloadSchema.safeParse(payload);
+  }
+  if (type === 'gpsUpdate') {
+    return z.object({
+      lat: z.number().min(-90).max(90),
+      lng: z.number().min(-180).max(180),
+      timestampMs: z.number().int().positive().optional(),
+    }).safeParse(payload);
+  }
+  return { success: true, data: payload };
+}
 
 // Schema for an individual Trip Event from the Flutter offline database
 const tripEventSchema = z.object({
@@ -105,7 +105,7 @@ router.post('/events/batch', authenticate, validateBatchPayload(batchSyncSchema)
 
     // 2. Validate per-event-type payloads and strip sensitive fields
     for (const event of events) {
-      const result = eventPayloadSchema.safeParse({ type: event.type, payload: event.payload || {} });
+      const result = validateEventPayload(event.type, event.payload || {});
       if (!result.success) {
         console.warn(`[SyncEngine] Invalid payload for event ${event.id} (type: ${event.type}):`, result.error.issues);
         return res.status(422).json({
