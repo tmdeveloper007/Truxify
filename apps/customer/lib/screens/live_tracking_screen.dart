@@ -190,8 +190,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         _order = order;
 
         if (order != null) {
-          final dn = order['driver_name']?.toString();
-          final tn = order['truck_number']?.toString();
+          final dn = order['driver_name']?.toString().trim();
+          final tn = order['truck_number']?.toString().trim();
 
           if (dn != null && dn.isNotEmpty) {
             _driverName = dn;
@@ -274,12 +274,13 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       }
 
       setState(() {
+        final dnFallback = _order?['driver_name']?.toString().trim();
         _driverName = results[0] ??
-            _order?['driver_name']?.toString() ??
-            _fallbackDriverText;
+            (dnFallback != null && dnFallback.isNotEmpty ? dnFallback : _fallbackDriverText);
+
+        final tnFallback = _order?['truck_number']?.toString().trim();
         _truckNumber = results[1] ??
-            _order?['truck_number']?.toString() ??
-            _fallbackTruckText;
+            (tnFallback != null && tnFallback.isNotEmpty ? tnFallback : _fallbackTruckText);
         _isLoadingDetails = false;
       });
     } catch (e) {
@@ -292,9 +293,10 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
       setState(() {
         _isLoadingDetails = false;
-        _driverName = _order?['driver_name']?.toString() ?? _fallbackDriverText;
-        _truckNumber =
-            _order?['truck_number']?.toString() ?? _fallbackTruckText;
+        final dnFallback = _order?['driver_name']?.toString().trim();
+        _driverName = dnFallback != null && dnFallback.isNotEmpty ? dnFallback : _fallbackDriverText;
+        final tnFallback = _order?['truck_number']?.toString().trim();
+        _truckNumber = tnFallback != null && tnFallback.isNotEmpty ? tnFallback : _fallbackTruckText;
       });
     }
   }
