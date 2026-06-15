@@ -312,10 +312,7 @@ describe('Bid Routes', () => {
   });
 
   it('POST /:id/bids/:bidId/accept triggers escrow deposit when wallet addresses present', async () => {
-    let resolveEscrow;
-    mockEscrowDeposit.mockImplementation(() => new Promise(resolve => {
-      resolveEscrow = () => resolve({ txHash: '0xescrowtest123' });
-    }));
+    mockEscrowDeposit.mockResolvedValue({ txHash: '0xescrowtest123' });
 
     m.store.orders.push({
       id: 'order-escrow',
@@ -367,14 +364,57 @@ describe('Bid Routes', () => {
     );
 
     let order = m.store.orders.find(o => o.id === 'order-escrow');
-    expect(order.escrow_status).toBe('funding');
-
-    resolveEscrow();
-    await new Promise(r => setImmediate(r));
-
-    order = m.store.orders.find(o => o.id === 'order-escrow');
     expect(order.escrow_status).toBe('funded');
     expect(order.deposit_tx_hash).toBe('0xescrowtest123');
+  });
+
+  it('POST /:id/bids/:bidId/accept sets escrow_status to fund_failed when escrow deposit fails', async () => {
+    mockEscrowDeposit.mockRejectedValue(new Error('Out of gas'));
+
+    m.store.orders.push({
+      id: 'order-escrow-fail',
+      customer_id: 'customer-1',
+      order_display_id: 'OD-ESCROW-FAIL',
+    });
+
+    m.store.load_offers.push({
+      id: 'load-escrow-fail',
+      order_display_id: 'OD-ESCROW-FAIL',
+      status: 'available',
+    });
+
+    m.store.load_bids.push({
+      id: 'bid-escrow-fail',
+      load_id: 'load-escrow-fail',
+      driver_id: 'driver-1',
+      bid_amount: 50000,
+      status: 'pending',
+    });
+
+    m.store.profiles.push(
+      { id: 'customer-1', full_name: 'Customer One', polygon_wallet_address: '0x1234567890abcdef1234567890abcdef12345678' },
+      { id: 'driver-1', full_name: 'Driver One' },
+    );
+
+    m.store.driver_details.push({
+      user_id: 'driver-1',
+      rating: 4.9,
+      total_trips: 100,
+      completion_rate: 98,
+      truck_id: null,
+      polygon_wallet_address: '0xAbcdef1234567890Abcdef1234567890Abcdef12',
+    });
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/orders/order-escrow-fail/bids/bid-escrow-fail/accept')
+      .set(CUSTOMER);
+
+    expect(res.status).toBe(200);
+
+    let order = m.store.orders.find(o => o.id === 'order-escrow-fail');
+    expect(order.escrow_status).toBe('fund_failed');
   });
 
   it('POST /:id/bids/:bidId/accept skips escrow when customer wallet missing', async () => {
