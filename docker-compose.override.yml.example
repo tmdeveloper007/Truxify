@@ -1,76 +1,18 @@
-# docker-compose.override.yml.example
-#
-# PURPOSE
-# -------
-# Docker Compose automatically merges docker-compose.override.yml into the
-# base docker-compose.yml when you run `docker compose up`. Use this file to:
-#
-#   • Override settings for local development without editing docker-compose.yml
-#   • Swap in cloud / staging credentials for a staging environment
-#   • Keep secrets out of version control
-#
-# USAGE
-# -----
-# Copy this file to docker-compose.override.yml (which is git-ignored):
-#
-#   cp docker-compose.override.yml.example docker-compose.override.yml
-#
-# Then edit docker-compose.override.yml for your environment and run:
-#
-#   docker compose up
-#
-# ⚠️  Never commit docker-compose.override.yml — it may contain real credentials.
-# ⚠️  This example file must never contain real credentials.
-
-# ---------------------------------------------------------------------------
-# LOCAL DEVELOPMENT CONFIGURATION
-# ---------------------------------------------------------------------------
-# All services communicate through the Docker bridge network.
-# No external cloud accounts are required.
-
 services:
   api:
     environment:
-      NODE_ENV: development
-      BYPASS_AUTH: "true"
-
-      # PostgreSQL / Supabase-compatible local database
-      DATABASE_URL: postgres://postgres:postgrespassword@db:5432/truxify
-
-      # MongoDB — telemetry and GPS tracking
-      MONGODB_URI: mongodb://mongo:27017/truxify_telemetry
-      MONGODB_DB_NAME: truxify_telemetry
-
-      # Redis — cache, rate limiting, session management
+      DATABASE_URL: postgresql://postgres:postgrespassword@db:5432/truxify
+      MONGODB_URI: mongodb://mongo:27017
       REDIS_URL: redis://redis:6379
 
-      # Supabase local stack (run `supabase start` separately, or leave blank)
-      # SUPABASE_URL: http://host.docker.internal:54321
-      # SUPABASE_SERVICE_ROLE_KEY: <your-local-service-role-key>
-      # SUPABASE_ANON_KEY: <your-local-anon-key>
+  db:
+    ports:
+      - "5432:5432"
 
-      # Firebase — leave blank to rely on BYPASS_AUTH in local dev
-      # FIREBASE_PROJECT_ID: <your-project-id>
-      # FIREBASE_CLIENT_EMAIL: <your-client-email>
-      # FIREBASE_PRIVATE_KEY: <your-private-key>
+  mongo:
+    ports:
+      - "27017:27017"
 
-  ml-engine:
-    environment:
-      ENV: development
-
-# ---------------------------------------------------------------------------
-# STAGING / CLOUD CONFIGURATION EXAMPLE
-# ---------------------------------------------------------------------------
-# To target a staging environment, comment out the LOCAL section above and
-# uncomment the block below, filling in your real staging credentials.
-#
-# services:
-#   api:
-#     environment:
-#       NODE_ENV: staging
-#       DATABASE_URL: postgres://<user>:<password>@<staging-host>:5432/<db>
-#       MONGODB_URI: mongodb+srv://<user>:<password>@<cluster>.mongodb.net/truxify
-#       REDIS_URL: redis://:<password>@<staging-redis-host>:6379
-#       SUPABASE_URL: https://<project-ref>.supabase.co
-#       SUPABASE_SERVICE_ROLE_KEY: <staging-service-role-key>
-#       SUPABASE_ANON_KEY: <staging-anon-key>
+  redis:
+    ports:
+      - "6379:6379"

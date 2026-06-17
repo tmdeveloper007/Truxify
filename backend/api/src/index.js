@@ -172,17 +172,23 @@ app.use('/api/v1/trips', tripRoutes);
 // ============================================================================
 // REST API ROUTING
 // ============================================================================
+const getHealthResponse = () => ({
+  status: 'healthy',
+  timestamp: new Date(),
+  service: 'Truxify API',
+  uptime: process.uptime(),
+  env: {
+    bypass_auth: process.env.BYPASS_AUTH === 'true',
+    node_version: process.version
+  }
+});
+
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date(),
-    service: 'Truxify API',
-    uptime: process.uptime(),
-    env: {
-      bypass_auth: process.env.BYPASS_AUTH === 'true',
-      node_version: process.version
-    }
-  });
+  res.json(getHealthResponse());
+});
+
+app.get('/health', (req, res) => {
+  res.json(getHealthResponse());
 });
 
 // Top-level /health alias — returns 200 directly (no redirect) so Docker
