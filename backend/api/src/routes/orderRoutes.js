@@ -23,6 +23,7 @@ import { buildDepositTx, recordDepositTx, escrowRelease, escrowRefund } from '..
 import { sendDeliveryOtpNotification } from '../services/notificationService.js';
 import { predictDemand, predictPrice } from '../services/ml.js';
 import rateLimit from 'express-rate-limit';
+import { z } from 'zod';
 import logger from '../middleware/logger.js';
 
 const router = express.Router();
