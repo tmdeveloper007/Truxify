@@ -1864,6 +1864,32 @@ describe('Customer actions: change-drop and cancel endpoints', () => {
     expect(stored.drop_lng).toBe(88.88);
   });
 
+  it('blocks change-drop with 409 when escrow is already funded', async () => {
+    m.store.orders.push({
+      id: 'order-funded-1',
+      customer_id: CUSTOMER_HEADERS['x-user-id'],
+      order_display_id: 'OD-FUNDED-1',
+      pickup_lat: 19.0760,
+      pickup_lng: 72.8777,
+      drop_lat: 28.7041,
+      drop_lng: 77.1025,
+      weight_tonnes: 3,
+      status: 'accepted',
+      escrow_status: 'funded',
+    });
+
+    const app = buildApp();
+
+    const res = await request(app)
+      .put('/api/orders/OD-FUNDED-1/change-drop')
+      .set(CUSTOMER_HEADERS)
+      .send({ drop_address: 'New Drop Place', drop_lat: 22.22, drop_lng: 88.88 });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toHaveProperty('error');
+    expect(res.body).toHaveProperty('recovery');
+  });
+
   it('allows customer to cancel order and returns cancellation_fee and persists reason', async () => {
     m.store.orders.push({
       id: 'order-cancel-1',
