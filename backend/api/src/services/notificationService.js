@@ -1,5 +1,6 @@
 import { supabase, firebaseAdmin } from '../config/db.js';
 import logger from '../middleware/logger.js';
+import crypto from 'crypto';
 
 const TRANSIENT_ERROR_CODES = new Set([
   'messaging/too-many-topics',
@@ -101,6 +102,79 @@ async function sendFcmNotification(userId, notification, data = {}) {
   }
 
   return { success: false, error: lastError?.message || 'Unknown error', errorCode: lastError?.code };
+}
+
+export async function storeDeliveryOtp(orderId, otp, ttlMinutes = 15) {
+  const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString();
+  const otpHash = crypto.createHash('sha256').update(String(otp)).digest('hex');
+
+  const { data, error } = await supabase
+    .from('delivery_otps')
+    .insert({
+      order_id: orderId,
+      otp_hash: otpHash,
+      expires_at: expiresAt,
+      verified: false,
+    })
+    .select('id')
+    .single();
+
+  if (error) {
+    console.error('[NotificationService] Failed to store OTP:', error.message);
+    return null;
+  }
+
+  console.log(`[NotificationService] OTP stored for order ${orderId}, expires at ${expiresAt}`);
+  return data;
+}
+
+export async function getActiveDeliveryOtp(orderId) {
+  const { data, error } = await supabase
+    .from('delivery_otps')
+    .select('id, otp_hash, expires_at')
+    .eq('order_id', orderId)
+    .eq('verified', false)
+    .gte('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[NotificationService] Failed to fetch active OTP:', error.message);
+    return null;
+  }
+
+  return data;
+}
+
+export async function verifyDeliveryOtp(orderId) {
+  const { error } = await supabase
+    .from('delivery_otps')
+    .update({
+      verified: true,
+      verified_at: new Date().toISOString(),
+    })
+    .eq('order_id', orderId)
+    .eq('verified', false);
+
+  if (error) {
+    console.error('[NotificationService] Failed to verify OTP:', error.message);
+    return false;
+  }
+
+  return true;
+}
+
+export async function expireDeliveryOtps(orderId) {
+  const { error } = await supabase
+    .from('delivery_otps')
+    .update({ expires_at: new Date().toISOString() })
+    .eq('order_id', orderId)
+    .eq('verified', false);
+
+  if (error) {
+    console.error('[NotificationService] Failed to expire OTPs:', error.message);
+  }
 }
 
 export async function sendDeliveryOtpNotification(customerId, orderDisplayId, otp) {

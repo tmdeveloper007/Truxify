@@ -37,6 +37,7 @@ vi.mock('../../src/config/db.js', () => ({
 const {
   sendDeliveryOtpNotification,
   sendPushNotification,
+  sendFcmNotification,
 } = await import('../../src/services/notificationService.js');
 
 describe('notificationService', () => {
@@ -91,24 +92,6 @@ describe('notificationService', () => {
       expect(result.fcm.success).toBe(false);
     });
 
-    it('clears invalid/expired registration tokens on Firebase error', async () => {
-      supabaseSelectMock.mockResolvedValue({
-        data: { fcm_token: 'expired_token_xyz' },
-        error: null
-      });
-
-      const fcmError = new Error('The registration token is not registered.');
-      fcmError.code = 'messaging/registration-token-not-registered';
-      firebaseSendMock.mockRejectedValue(fcmError);
-
-      await sendDeliveryOtpNotification('user_uuid_111', '#ORD1234', '987654');
-
-      expect(supabaseUpdateMock).toHaveBeenCalledOnce();
-      const updateArgs = supabaseUpdateMock.mock.calls[0][1];
-      expect(updateArgs.fcm_token).toBeNull();
-      expect(updateArgs).toHaveProperty('fcm_token_updated_at');
-    });
-
     it('returns no FCM token warning when user has no token', async () => {
       supabaseSelectMock.mockResolvedValue({
         data: { fcm_token: null },
@@ -120,6 +103,28 @@ describe('notificationService', () => {
       expect(result.success).toBe(false);
       expect(result.fcm.success).toBe(false);
       expect(result.fcm.error).toBe('No FCM token');
+    });
+  });
+
+  describe('sendFcmNotification', () => {
+    it('clears invalid/expired registration tokens on Firebase error', async () => {
+      supabaseSelectMock.mockResolvedValue({
+        data: { fcm_token: 'expired_token_xyz' },
+        error: null
+      });
+
+      const fcmError = new Error('The registration token is not registered.');
+      fcmError.code = 'messaging/registration-token-not-registered';
+      firebaseSendMock.mockRejectedValue(fcmError);
+
+      const customerId = 'user_uuid_111';
+
+      await sendFcmNotification(customerId, { title: 'Test', body: 'Test' });
+
+      expect(supabaseUpdateMock).toHaveBeenCalledOnce();
+      const updateArgs = supabaseUpdateMock.mock.calls[0][1];
+      expect(updateArgs.fcm_token).toBeNull();
+      expect(updateArgs).toHaveProperty('fcm_token_updated_at');
     });
   });
 
