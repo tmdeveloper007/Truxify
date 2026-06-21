@@ -81,10 +81,10 @@ router.get('/search', authenticate, async (req, res) => {
         }
         isAiEstimate = true;
       } else {
-        console.warn('[ML] Invalid price prediction response during search:', mlResult);
+        logger.warn('[ML] Invalid price prediction response during search:', mlResult);
       }
     } catch (mlErr) {
-      console.warn('[ML] Price prediction unavailable during search, falling back to base pricing:', mlErr.message);
+      logger.warn('[ML] Price prediction unavailable during search, falling back to base pricing:', mlErr.message);
     }
 
     const { data: drivers, error: driversErr } = await supabase
