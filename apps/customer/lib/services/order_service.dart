@@ -236,8 +236,9 @@ class OrderService {
 
       // Extract price values from results and calculate min/max
       final prices = results
-          .map((r) => r['price'] as int?)
-          .whereType<int>()
+          .map((r) => r['price'] as num?)
+          .whereType<num>()
+          .map((p) => p.round())
           .toList();
 
       if (prices.isEmpty) return null;
