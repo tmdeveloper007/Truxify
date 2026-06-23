@@ -315,7 +315,7 @@ describe('Support Routes', () => {
       expect(res.body.ticket.category).toBe('payment'); // billing maps to payment
     });
 
-    it('allows owner to change status to closed', async () => {
+    it('denies owner from changing status to closed', async () => {
       m.store.support_tickets.push({
         id: 'ticket-123',
         user_id: 'customer-1',
@@ -328,8 +328,8 @@ describe('Support Routes', () => {
         .set(CUSTOMER_HEADERS)
         .send({ status: 'closed' });
 
-      expect(res.status).toBe(200);
-      expect(res.body.ticket.status).toBe('closed');
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('Access Denied: Only admins can change ticket status.');
     });
 
     it('denies owner from changing status to in_progress or resolved', async () => {
@@ -346,7 +346,7 @@ describe('Support Routes', () => {
         .send({ status: 'in_progress' });
 
       expect(res.status).toBe(403);
-      expect(res.body.error).toBe('Access Denied: Only admins can change tickets to this status.');
+      expect(res.body.error).toBe('Access Denied: Only admins can change ticket status.');
     });
 
     it('allows admin to change status to in_progress or resolved', async () => {
