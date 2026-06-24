@@ -4,6 +4,8 @@ import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:truxify_driver/services/driver_earnings_service.dart';
 
+import 'setup.dart';
+
 class MockGoTrueClient implements GoTrueClient {
   final User? mockUser;
   final Session? mockSession;
@@ -107,6 +109,10 @@ class MockHttpClient extends http.BaseClient {
 }
 
 void main() {
+  setUpAll(() async {
+    await setupTests();
+  });
+
   group('DriverEarningsService Tests', () {
     const driverId = 'driver-123';
     final mockUser = FakeUser(driverId);

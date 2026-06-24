@@ -205,13 +205,12 @@ export async function sendDeliveryOtpNotification(customerId, orderDisplayId, ot
     logger.error('[NotificationService] Database connection error during notification insert:', dbErr.message);
   }
 
-  try {
-    await sendFcmNotification(
-      customerId,
-      { title: 'Delivery Verification OTP', body: `A delivery OTP has been generated for order ${orderDisplayId}. Open the app to view the code.` },
-      { orderDisplayId, notifType: 'delivery_otp' }
-    );
-  } catch (_) { /* logged internally by sendFcmNotification */ }
+  let fcmResult;
+  try { fcmResult = await sendFcmNotification(
+    customerId,
+    { title: 'Delivery Verification OTP', body: `A delivery OTP has been generated for order ${orderDisplayId}. Open the app to view the code.` },
+    { orderDisplayId, notifType: 'delivery_otp' }
+  ); } catch (_) { /* logged internally by sendFcmNotification */ }
 
   if (process.env.TWILIO_AUTH_TOKEN) {
     const smsOtpLog = process.env.NODE_DEBUG
@@ -223,7 +222,7 @@ export async function sendDeliveryOtpNotification(customerId, orderDisplayId, ot
     logger.info(`[NotificationService] [SMS] SMS stub: No SMS gateway configured. Logging OTP out-of-band: ${logOtp}`);
   }
 
-  return { success: dbSuccess };
+  return { success: dbSuccess || fcmResult?.success, fcm: fcmResult };
 }
 
 export async function sendPushNotification(userId, title, body, notifType, metadata = {}) {
