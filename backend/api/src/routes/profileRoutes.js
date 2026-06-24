@@ -12,7 +12,7 @@ import { supabase } from '../config/db.js';
 import { ProfileModel } from '../models/ProfileModel.js';
 import { invalidateCachedProfile, invalidateCachedSupabaseProfile } from '../lib/profileCache.js';
 import { validateBody } from '../middleware/validate.js';
-import { updateProfileSchema } from '../validation/requestSchemas.js';
+import { updateProfileSchema, updateWalletSchema } from '../validation/requestSchemas.js';
 
 const router = express.Router();
 
@@ -72,7 +72,7 @@ router.get('/:id/name', authenticate, userLimiter, async (req, res) => {
 });
 
 // UPDATE WALLET ADDRESS
-router.put('/wallet', authenticate, userLimiter, async (req, res) => {
+router.put('/wallet', authenticate, userLimiter, validateBody(updateWalletSchema), async (req, res) => {
   const userId = req.user.id;
   const { wallet_address } = req.body;
 
