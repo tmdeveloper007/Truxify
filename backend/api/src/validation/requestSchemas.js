@@ -52,7 +52,7 @@ export const createOrderSchema = z.object({
   special_requirements: z.string().max(500).optional().nullable(),
   payment_method_id: z.string().optional(),
   upi_id: z.string().regex(upiRegex, "Invalid UPI ID format").optional().or(z.literal('')).nullable()
-}).strict();
+}).passthrough();
 
 export const paramIdSchema = z.object({
   id: uuidSchema.or(z.string().min(1, "ID is required"))
@@ -63,7 +63,7 @@ export const submitBidSchema = z.object({
     .number()
     .int({ message: 'Must be a positive integer' })
     .positive({ message: 'Must be greater than 0' }),
-}).strict();
+}).passthrough();
 
 export const acceptBidParamsSchema = z.object({
   id: uuidSchema.or(z.string().min(1, "Order ID is required")),
@@ -72,7 +72,7 @@ export const acceptBidParamsSchema = z.object({
 
 export const driverOnlineSchema = z.object({
   is_online: z.boolean(),
-}).strict();
+}).passthrough();
 
 export const withdrawSchema = z.object({
   amount: z
@@ -80,7 +80,7 @@ export const withdrawSchema = z.object({
     .int({ message: 'Amount must be a whole number (paisa)' })
     .positive({ message: 'Amount must be greater than 0' })
     .safe({ message: 'Amount is too large' }),
-}).strict();
+}).passthrough();
 
 export const submitRatingSchema = z.object({
   stars: z
@@ -89,7 +89,7 @@ export const submitRatingSchema = z.object({
     .min(1, { message: 'Stars must be between 1 and 5' })
     .max(5, { message: 'Stars must be between 1 and 5' }),
   comment: z.string().trim().max(1000, { message: 'Comment must be 1000 characters or fewer' }).optional().nullable(),
-}).strict();
+}).passthrough();
 export const predictDemandSchema = z.object({
   hour: z.number().min(0).max(23, { message: 'Hour must be between 0 and 23' }),
   day_of_week: z.number().min(0).max(6, { message: 'Day of week must be between 0 and 6' }),
@@ -97,7 +97,7 @@ export const predictDemandSchema = z.object({
   precipitation: z.number().nonnegative({ message: 'Precipitation must be greater than or equal to 0' }),
   historical_volume: z.number().nonnegative({ message: 'Historical volume must be greater than or equal to 0' }),
   nearby_drivers: z.number().nonnegative({ message: 'Nearby drivers must be greater than or equal to 0' }),
-}).strict();
+}).passthrough();
 
 export const updateMilestoneSchema = z.object({
   milestone: z.enum(['Truck Assigned', 'En Route to Pickup', 'Arrived at Pickup', 'Goods Loaded', 'In Transit', 'Arriving', 'Delivered'], {
@@ -128,14 +128,14 @@ export const changeDropSchema = z.object({
 
 export const cancelOrderSchema = z.object({
   reason: z.string().max(500).optional().nullable(),
-}).strict();
+}).passthrough();
 
 export const updateWalletSchema = z.object({
   wallet_address: z.string().regex(
     /^0x[a-fA-F0-9]{40}$/,
     'Must be a valid 0x-prefixed 42-character wallet address'
   ),
-}).strict();
+}).passthrough();
 
 export const registerDeviceSchema = z.object({
   fcmToken: z.string()
@@ -144,7 +144,7 @@ export const registerDeviceSchema = z.object({
   platform: z.enum(['android', 'ios', 'web'], {
     invalid_type_error: 'platform must be one of: android, ios, web',
   }).default('android'),
-}).strict();
+}).passthrough();
 
 export const createTicketSchema = z.object({
   subject: z.string().transform((v) => v.trim()).pipe(
@@ -154,7 +154,7 @@ export const createTicketSchema = z.object({
     z.string().min(1, 'Category is required').max(50, 'Category must be 50 characters or fewer')
   ),
   description: z.string().max(5000, 'Description must be 5000 characters or fewer').optional(),
-}).strict();
+}).passthrough();
 
 export const updateTicketSchema = z.object({
   subject: z.string().min(1, 'Subject cannot be empty').max(200, 'Subject must be 200 characters or fewer').optional(),
@@ -163,11 +163,11 @@ export const updateTicketSchema = z.object({
   status: z.enum(['open', 'in_progress', 'resolved', 'closed'], {
     invalid_type_error: "Status must be one of: open, in_progress, resolved, closed",
   }).optional(),
-}).strict();
+}).passthrough();
 
 export const updateProfileSchema = z.object({
   full_name: z.string().max(100, 'Name must be 100 characters or fewer').optional(),
   language: z.string().max(10, 'Language code must be 10 characters or fewer').optional(),
   dark_mode: z.boolean().optional(),
   is_online: z.boolean().optional(),
-}).strict();
+}).passthrough();
