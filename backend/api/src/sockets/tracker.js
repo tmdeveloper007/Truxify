@@ -519,9 +519,12 @@ export async function handleLocationPing(ws, data) {
   if (supabase && orderUUID) {
     if (!locationChannels.has(orderUUID)) {
       const channel = supabase.channel(`driver-location:${orderUUID}`);
-      locationChannels.set(orderUUID, channel);
+      channel.subscribe();
+      locationChannels.set(orderUUID, { channel, lastUsed: Date.now() });
+    } else {
+      locationChannels.get(orderUUID).lastUsed = Date.now();
     }
-    const channel = locationChannels.get(orderUUID);
+    const { channel } = locationChannels.get(orderUUID);
     channel.send({
       type: 'broadcast',
       event: 'location',
@@ -642,6 +645,27 @@ function scheduleNextFlush() {
   }, Math.max(BUFFER_FLUSH_INTERVAL_MS, flushBackoffMs));
 }
 
+const CHANNEL_STALE_MS = 10 * 60 * 1000;
+let channelCleanupInterval = null;
+
+function cleanupStaleChannels() {
+  const now = Date.now();
+  for (const [orderUUID, entry] of locationChannels) {
+    if (now - entry.lastUsed > CHANNEL_STALE_MS) {
+      entry.channel.unsubscribe();
+      supabase.removeChannel(entry.channel);
+      locationChannels.delete(orderUUID);
+      logger.info(`🔌 Cleaned up stale Supabase channel for order "${orderUUID}"`);
+    }
+  }
+}
+
+function startChannelCleanup() {
+  if (channelCleanupInterval) return;
+  channelCleanupInterval = setInterval(cleanupStaleChannels, CHANNEL_STALE_MS);
+  logger.info('[tracker] Supabase channel cleanup interval started (10 min)');
+}
+
 function loadRecoveryFile() {
   try {
     if (fs.existsSync(RECOVERY_FILE_PATH)) {
@@ -665,6 +689,7 @@ function initTelemetryScheduler() {
   loadRecoveryFile();
   isSchedulerActive = true;
   scheduleNextFlush();
+  startChannelCleanup();
   
   telemetryMonitorInterval = setInterval(() => {
     monitorBufferSize();
@@ -686,6 +711,11 @@ export async function closeWebSocketServer() {
   if (wsHeartbeatInterval) {
     clearInterval(wsHeartbeatInterval);
     wsHeartbeatInterval = null;
+  }
+
+  if (channelCleanupInterval) {
+    clearInterval(channelCleanupInterval);
+    channelCleanupInterval = null;
   }
 
   // Wait for MongoDB to be available before final flush
@@ -861,7 +891,8 @@ async function removeClientFromAllSubscriptions(ws) {
       // Clean up the cached Supabase Realtime channel for this orderUUID
       // so channels do not leak after the last subscriber disconnects.
       if (locationChannels.has(key)) {
-        const channel = locationChannels.get(key);
+        const { channel } = locationChannels.get(key);
+        channel.unsubscribe();
         supabase.removeChannel(channel);
         locationChannels.delete(key);
         logger.info(`🔌 Removed Supabase Realtime channel for order "${key}" on last subscriber disconnect.`);
