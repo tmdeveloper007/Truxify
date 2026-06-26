@@ -339,7 +339,8 @@ describe('POST /api/orders — server-side pricing contract', () => {
     m.store.order_timeline = [{
       order_display_id: 'ORD001',
       milestone: 'Goods Loaded',
-      completed: false
+      completed: false,
+      sort_order: 40
     }];
 
     const app = buildApp();
@@ -369,7 +370,8 @@ describe('POST /api/orders — server-side pricing contract', () => {
     m.store.order_timeline = [{
       order_display_id: 'ORD001',
       milestone: 'En Route to Pickup',
-      completed: false
+      completed: false,
+      sort_order: 20
     }];
 
     const app = buildApp();
@@ -400,7 +402,8 @@ describe('POST /api/orders — server-side pricing contract', () => {
     m.store.order_timeline = [{
       order_display_id: 'ORD001',
       milestone: 'Arrived at Pickup',
-      completed: false
+      completed: false,
+      sort_order: 30
     }];
 
     const app = buildApp();
@@ -430,7 +433,8 @@ describe('POST /api/orders — server-side pricing contract', () => {
     m.store.order_timeline = [{
       order_display_id: 'ORD001',
       milestone: 'Goods Loaded',
-      completed: false
+      completed: false,
+      sort_order: 40
     }];
 
     const app = buildApp();
@@ -834,6 +838,12 @@ describe('PUT /api/orders/:id/milestones — edge cases', () => {
       driver_id: DRIVER_HEADERS['x-user-id'],
       order_display_id: 'OD1',
     });
+    m.store.order_timeline = [{
+      order_display_id: 'OD1',
+      milestone: 'Goods Loaded',
+      completed: false,
+      sort_order: 40,
+    }];
 
     const originalFrom = m.supabase.from.bind(m.supabase);
     m.supabase.from = (table) => {
@@ -922,6 +932,7 @@ describe('PUT /api/orders/:id/milestones — timeline update error', () => {
       order_display_id: 'OD1',
       milestone: 'In Transit',
       completed: false,
+      sort_order: 50,
     });
 
     const originalFrom = m.supabase.from.bind(m.supabase);
@@ -996,7 +1007,8 @@ describe('Delivery OTP Verification and Milestones', () => {
     m.store.order_timeline = [{
       order_display_id: 'ORD001',
       milestone: 'In Transit',
-      completed: false
+      completed: false,
+      sort_order: 50
     }];
     m.store.notifications = [];
     m.store.delivery_otps = []; // ensure no stale OTP from prior tests
@@ -1465,7 +1477,8 @@ describe('Delivery OTP Verification and Milestones', () => {
     m.store.order_timeline = [{
       order_display_id: 'ORD-REGEN',
       milestone: 'In Transit',
-      completed: true
+      completed: false,
+      sort_order: 50
     }];
     m.store.notifications = [];
 
@@ -1603,6 +1616,12 @@ describe('Delivery OTP Verification and Milestones', () => {
 
       // Expire the OTP in the isolated table so the milestone triggers regeneration
       m.store.delivery_otps[0].expires_at = new Date(Date.now() - 1 * 60 * 1000).toISOString();
+      m.store.order_timeline = [{
+        order_display_id: 'ORD-REDIS',
+        milestone: 'In Transit',
+        completed: false,
+        sort_order: 50,
+      }];
 
       // Milestone change clears lockout in Redis and generates new OTP
       await request(app)
