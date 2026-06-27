@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional
+from .models.eta_prediction import eta_predictor
 
 from .models.demand_forecast import (
     predict_demand,
@@ -72,6 +73,17 @@ class PricePredictOutput(BaseModel):
     estimated_price: float
     currency: str = "INR"
 
+class ETAPredictInput(BaseModel):
+    route_distance: float = Field(..., gt=0)
+    time_of_day: int = Field(..., ge=0, le=23)
+    day_of_week: int = Field(..., ge=0, le=6)
+    route_type: str = Field(..., description="highway or city")
+    historical_speed: float = Field(..., gt=0)
+
+
+class ETAPredictOutput(BaseModel):
+    eta_minutes: float
+    confidence_interval: dict
 
 class TrainResponse(BaseModel):
     status: str
@@ -126,7 +138,23 @@ async def predict_price_endpoint(input: PricePredictInput, _auth=Depends(verify_
         logger.error("Price prediction failed: %s", e)
         raise HTTPException(status_code=500, detail="Price prediction failed")
 
-
+@app.post("/predict/eta", response_model=ETAPredictOutput)
+async def predict_eta_endpoint(input: ETAPredictInput, _auth=Depends(verify_api_key)):
+    try:
+        result = eta_predictor.predict(
+            distance=input.route_distance,
+            time_of_day=input.time_of_day,
+            day_of_week=input.day_of_week,
+            route_type=input.route_type,
+            historical_speed=input.historical_speed,
+        )
+        return ETAPredictOutput(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error("ETA prediction failed: %s", e)
+        raise HTTPException(status_code=500, detail="ETA prediction failed")
+    
 @app.post("/train/demand", response_model=TrainResponse)
 async def train_demand_endpoint(_auth=Depends(verify_api_key)):
     timeout = int(os.environ.get("ML_TRAINING_TIMEOUT_SECONDS", 300))
