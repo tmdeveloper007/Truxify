@@ -129,7 +129,7 @@ const predictDemandLimiter = rateLimit({
   max: process.env.NODE_ENV === 'test' ? 1000 : 10,
   keyGenerator: (req) => {
     if (!req.user || !req.user.id) {
-      throw new Error('User is not authenticated');
+      return req.ip ?? 'unknown-ip';
     }
     return req.user.id;
   },
