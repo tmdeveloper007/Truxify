@@ -12,7 +12,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: pr-labeler-${{ github.event.pull_request.number }}
+  group: pr-labeler-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
 jobs:
