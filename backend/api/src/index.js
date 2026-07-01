@@ -215,10 +215,6 @@ app.use((err, req, res, next) => {
 await waitForMongoDb();
 initWebSocketServer(server);
 
-await waitForMongoDb();
-initWebSocketServer(server); // Keep existing
-const io = attachLocationServer(server); // Add new one
-
 // ============================================================================
 // START SERVER
 // ============================================================================
