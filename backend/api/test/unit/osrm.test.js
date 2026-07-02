@@ -63,19 +63,19 @@ describe('osrm - buildRouteUrl', () => {
 });
 
 describe('osrm - buildCacheKey', ()=> {
-  it('rounds coordinates to 4 decimanl places', () => {
+  it('rounds coordinates to 6 decimal places with v2 prefix', () => {
     const key = buildCacheKey({
       pickupLat: 12.9715987,
       pickupLng: 77.5945627,
       dropLat: 13.0827,
       dropLng: 80.2707,
     });
-    expect(key).toBe('osrm:route:12.9716:77.5946:13.0827:80.2707');
+    expect(key).toBe('osrm:route:v2:12.971599:77.594563:13.0827:80.2707');
   });
 
   it('produces same key for coordinates that round to same values', () => {
-    const key1 = buildCacheKey({ pickupLat: 12.97161, pickupLng: 77.5, dropLat:13.0, dropLng: 80.0});
-    const key2 = buildCacheKey({ pickupLat: 12.97164, pickupLng: 77.5, dropLat:13.0, dropLng:80.0});
+    const key1 = buildCacheKey({ pickupLat: 12.971111, pickupLng: 77.5, dropLat:13.0, dropLng: 80.0});
+    const key2 = buildCacheKey({ pickupLat: 12.971111, pickupLng: 77.5, dropLat:13.0, dropLng:80.0});
     expect(key1).toBe(key2);
   });
 
@@ -192,7 +192,10 @@ describe('osrm - getRouteEstimate', () => {
     });
 
     expect(result).toBeNull();
-    expect(mockLogger.error).toHaveBeenCalledWith('[osrm] Fetch error:', 'AbortError');
+    // After retries are exhausted, error is logged with 'after all retries' message
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      '[osrm] Fetch error after all %d retries: %s', 3, 'AbortError'
+    );
   });
 
   it('uses OSRM_TIMEOUT_MS env variable', async () => {
@@ -230,7 +233,7 @@ describe('osrm - getRouteEstimate', () => {
       pickupLat: 12.9715987, pickupLng: 77.5945627, dropLat: 13.0827, dropLng: 80.2707,
     });
 
-    expect(mockRedis.get).toHaveBeenCalledWith('osrm:route:12.9716:77.5946:13.0827:80.2707');
+    expect(mockRedis.get).toHaveBeenCalledWith('osrm:route:v2:12.971599:77.594563:13.0827:80.2707');
   });
 
   it('calls OSRM and stores result in Redis on cache miss', async () => {
@@ -246,10 +249,10 @@ describe('osrm - getRouteEstimate', () => {
     expect(result).toEqual({ distanceKm: 45, durationSeconds: 3600 });
     expect(fetch).toHaveBeenCalledOnce();
     expect(mockRedis.set).toHaveBeenCalledWith(
-      'osrm:route:12.9716:77.5946:13.0827:80.2707',
+      'osrm:route:v2:12.9716:77.5946:13.0827:80.2707',
       JSON.stringify(result),
       'EX',
-      86400
+      3600
     );
   });
 

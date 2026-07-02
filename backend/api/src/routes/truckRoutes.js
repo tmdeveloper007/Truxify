@@ -1,13 +1,102 @@
 import express from 'express';
 import { supabase } from '../config/db.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireRole } from '../middleware/auth.js';
 import { userLimiter } from '../middleware/rateLimiter.js';
+import { validateParams, validateBody } from '../middleware/validate.js';
+import { paramIdSchema, uuidParamSchema, registerTruckSchema } from '../validation/requestSchemas.js';
 import { getRouteEstimate } from '../services/osrm.js';
 import { computeOrderPricing } from '../lib/pricing.js';
 import { predictPrice } from '../services/ml.js';
 import logger from '../middleware/logger.js';
 
 const router = express.Router();
+
+// ============================================================================
+// REGISTER A TRUCK (DRIVER ONLY)
+// ============================================================================
+/**
+ * POST /api/trucks
+ * Allows authenticated drivers to register a truck they own.
+ * - Validates payload with registerTruckSchema (name, number_plate, max_capacity_tons)
+ * - Returns 409 if the number plate is already registered
+ */
+router.post('/', authenticate, requireRole(['driver']), userLimiter, validateBody(registerTruckSchema), async (req, res) => {
+  const { name, number_plate, max_capacity_tons } = req.body;
+
+  try {
+    // Check for duplicate number plate
+    const { data: existing, error: checkErr } = await supabase
+      .from('trucks')
+      .select('id')
+      .eq('number_plate', number_plate)
+      .maybeSingle();
+
+    if (checkErr) {
+      return res.status(500).json({ error: 'Failed to check for existing truck.', details: checkErr.message });
+    }
+
+    if (existing) {
+      return res.status(409).json({ error: 'A truck with this number plate is already registered.' });
+    }
+
+    const { data: truck, error: insertErr } = await supabase
+      .from('trucks')
+      .insert({ name, number_plate, max_capacity_tons, owner_id: req.user.id })
+      .select('id, name, number_plate, max_capacity_tons, created_at')
+      .single();
+
+    if (insertErr) {
+      if (insertErr.code === '23505') {
+        return res.status(409).json({ error: 'A truck with this number plate is already registered.' });
+      }
+      return res.status(500).json({ error: 'Failed to register truck.', details: insertErr.message });
+    }
+
+    return res.status(201).json({ message: 'Truck registered successfully.', truck });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal Server Error', details: err.message });
+  }
+});
+
+// ============================================================================
+// LIST DRIVER'S TRUCKS
+// ============================================================================
+/**
+ * GET /api/trucks
+ * Returns all trucks owned by the authenticated driver.
+ */
+router.get('/', authenticate, requireRole(['driver']), userLimiter, async (req, res) => {
+  const { name } = req.query;
+  const { min_capacity, max_capacity } = req.query;
+
+  try {
+    let query = supabase
+      .from('trucks')
+      .select('id, name, number_plate, max_capacity_tons, created_at')
+      .eq('owner_id', req.user.id);
+
+    if (name) {
+      query = query.ilike('name', `%${name}%`);
+    }
+    if (min_capacity) {
+      query = query.gte('max_capacity_tons', Number(min_capacity));
+    }
+    if (max_capacity) {
+      query = query.lte('max_capacity_tons', Number(max_capacity));
+    }
+
+    const { data: trucks, error } = await query.order('created_at', { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error: 'Failed to fetch trucks.', details: error.message });
+    }
+
+    return res.json({ trucks: trucks || [] });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal Server Error', details: err.message });
+  }
+});
+
 
 function parseBoolean(value) {
   if (typeof value === 'boolean') return value;
@@ -34,6 +123,13 @@ router.get('/search', authenticate, userLimiter, async (req, res) => {
 
   if ([numPickupLat, numPickupLng, numDropLat, numDropLng, numWeightTonnes].some(isNaN)) {
     return res.status(400).json({ error: 'Invalid numeric parameters' });
+  }
+
+  if (numPickupLat < -90 || numPickupLat > 90 || numDropLat < -90 || numDropLat > 90) {
+    return res.status(400).json({ error: 'Latitude must be between -90 and 90' });
+  }
+  if (numPickupLng < -180 || numPickupLng > 180 || numDropLng < -180 || numDropLng > 180) {
+    return res.status(400).json({ error: 'Longitude must be between -180 and 180' });
   }
 
   if (numWeightTonnes <= 0 || numWeightTonnes > 50) {
@@ -145,7 +241,7 @@ router.get('/search', authenticate, userLimiter, async (req, res) => {
 });
 
 // GET TRUCK NUMBER PLATE BY ID
-router.get('/:id/number', authenticate, userLimiter, async (req, res) => {
+router.get('/:id/number', authenticate, userLimiter, validateParams(uuidParamSchema), async (req, res) => {
   try {
     const { data: truck, error } = await supabase
       .from('trucks')

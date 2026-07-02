@@ -147,6 +147,124 @@ describe('Load Offers Routes Integration Tests', () => {
       expect(filters).toContainEqual({ col: 'extra_distance_km', op: 'lte', val: 15 });
     });
 
+    it.each([
+      ['min_price', '100abc'],
+      ['max_price', '500rupees'],
+      ['distance', '25km'],
+      ['min_price', 'Infinity'],
+      ['max_price', '1e3'],
+      ['distance', '-1'],
+      ['distance', ''],
+    ])('rejects malformed %s filter value %s', async (field, value) => {
+      const res = await request(buildApp())
+        .get(`/api/loads?${field}=${encodeURIComponent(value)}`)
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Validation failed');
+      expect(res.body.details).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field }),
+        ])
+      );
+      expect(m.calls.find(call => call.table === 'load_offers')).toBeUndefined();
+    });
+
+    it('escapes LIKE metacharacters in pickup_location to prevent injection', async () => {
+      m.store.load_offers.push({
+        id: 'load-1',
+        pickup_address: 'Chennai Central',
+        drop_address: 'Bangalore City',
+        status: 'available',
+      });
+
+      const res = await request(buildApp())
+        .get(`/api/loads?pickup_location=${encodeURIComponent('%')}`)
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(200);
+
+      const call = m.calls.find(c => c.table === 'load_offers' && c.mode === 'select');
+      const pickupFilter = call.filters.find(f => f.col === 'pickup_address');
+      expect(pickupFilter.val).toBe('%\\%%');
+    });
+
+    it('escapes LIKE underscore in pickup_location', async () => {
+      m.store.load_offers.push({
+        id: 'load-1',
+        pickup_address: 'Chennai Central',
+        status: 'available',
+      });
+
+      const res = await request(buildApp())
+        .get(`/api/loads?pickup_location=${encodeURIComponent('_')}`)
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(200);
+
+      const call = m.calls.find(c => c.table === 'load_offers' && c.mode === 'select');
+      const pickupFilter = call.filters.find(f => f.col === 'pickup_address');
+      expect(pickupFilter.val).toBe('%\\_%');
+    });
+
+    it('rejects pickup_location longer than 200 characters', async () => {
+      const longString = 'A'.repeat(201);
+      const res = await request(buildApp())
+        .get(`/api/loads?pickup_location=${longString}`)
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('pickup_location too long (max 200 chars)');
+    });
+
+    it('rejects destination longer than 200 characters', async () => {
+      const longString = 'B'.repeat(201);
+      const res = await request(buildApp())
+        .get(`/api/loads?destination=${longString}`)
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('destination too long (max 200 chars)');
+    });
+
+    it('rejects repeated numeric filters instead of accepting an array', async () => {
+      const res = await request(buildApp())
+        .get('/api/loads?min_price=100&min_price=200')
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(400);
+      expect(res.body.details).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: 'min_price' }),
+        ])
+      );
+    });
+
+    it('rejects a minimum price greater than the maximum price', async () => {
+      const res = await request(buildApp())
+        .get('/api/loads?min_price=15000&max_price=10000')
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(400);
+      expect(res.body.details).toContainEqual({
+        field: 'min_price',
+        message: 'min_price must be less than or equal to max_price',
+      });
+      expect(m.calls.find(call => call.table === 'load_offers')).toBeUndefined();
+    });
+
+    it('accepts complete decimal strings including zero', async () => {
+      const res = await request(buildApp())
+        .get('/api/loads?min_price=0&max_price=15000.50&distance=15.25')
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(200);
+      const call = m.calls.find(c => c.table === 'load_offers' && c.mode === 'select');
+      expect(call.filters).toContainEqual({ col: 'freight_value', op: 'gte', val: 0 });
+      expect(call.filters).toContainEqual({ col: 'freight_value', op: 'lte', val: 1500050 });
+      expect(call.filters).toContainEqual({ col: 'extra_distance_km', op: 'lte', val: 15.25 });
+    });
+
     it('supports status filtering (open/available maps to available)', async () => {
       m.store.load_offers.push({
         id: 'load-1',
@@ -175,6 +293,31 @@ describe('Load Offers Routes Integration Tests', () => {
       expect(res.status).toBe(200);
       expect(res.body.loads).toHaveLength(0);
       expect(res.body.total).toBe(0);
+    });
+
+    it('accepts truck vehicle_type filter case-insensitively', async () => {
+      m.store.load_offers.push({
+        id: 'load-1',
+        status: 'available',
+      });
+
+      const res = await request(buildApp())
+        .get('/api/loads?vehicle_type=truck')
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(200);
+      expect(res.body.loads).toHaveLength(1);
+      expect(res.body.loads[0].vehicle_type).toBe('Truck');
+    });
+
+    it('rejects repeated vehicle_type filters instead of treating them as an array', async () => {
+      const res = await request(buildApp())
+        .get('/api/loads?vehicle_type=Truck&vehicle_type=Van')
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('vehicle_type must be a single string');
+      expect(m.calls.find(call => call.table === 'load_offers')).toBeUndefined();
     });
 
     it('maps sort_by parameters correctly', async () => {

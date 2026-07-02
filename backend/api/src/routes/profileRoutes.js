@@ -1,8 +1,9 @@
 import express from 'express';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireRole } from '../middleware/auth.js';
 import { userLimiter } from '../middleware/rateLimiter.js';
-import { validateBody } from '../middleware/validate.js';
-import { updateProfileSchema } from '../validation/requestSchemas.js';
+import { validateBody, validateQuery, validateParams } from '../middleware/validate.js';
+import { updateProfileSchema, updateWalletSchema, driverStatementSchema, paramIdSchema, uuidParamSchema, updateFcmTokenSchema } from '../validation/requestSchemas.js';
+import logger from '../middleware/logger.js';
 import {
   getProfile,
   getCustomerStats,
@@ -11,9 +12,6 @@ import {
 import { supabase } from '../config/db.js';
 import { ProfileModel } from '../models/ProfileModel.js';
 import { invalidateCachedProfile, invalidateCachedSupabaseProfile } from '../lib/profileCache.js';
-import { validateBody } from '../middleware/validate.js';
-import { updateProfileSchema, updateWalletSchema } from '../validation/requestSchemas.js';
-
 const router = express.Router();
 
 // GET PROFILE
@@ -54,7 +52,7 @@ router.get('/', authenticate, userLimiter, async (req, res) => {
 });
 
 // GET PROFILE NAME BY ID
-router.get('/:id/name', authenticate, userLimiter, async (req, res) => {
+router.get('/:id/name', authenticate, userLimiter, validateParams(uuidParamSchema), async (req, res) => {
   try {
     const { data: profile, error } = await supabase
       .from('profiles')
@@ -119,10 +117,14 @@ router.put('/wallet', authenticate, userLimiter, validateBody(updateWalletSchema
     }
 
     if (req.user && req.user.uid) {
-      void invalidateCachedProfile(req.user.uid);
+      try { await invalidateCachedProfile(req.user.uid); } catch (_) { logger.error('Cache invalidation failed', _); }
     }
     if (req.user && req.user.id) {
-      void invalidateCachedSupabaseProfile(req.user.id);
+      try {
+        await invalidateCachedSupabaseProfile(req.user.id);
+      } catch (err) {
+        logger.warn('[profileRoutes] Failed to invalidate profile cache for user %s: %s', req.user.id, err.message);
+      }
     }
 
     res.json({ success: true, walletAddress: normalized });
@@ -162,15 +164,16 @@ router.put('/', authenticate, userLimiter, validateBody(updateProfileSchema), as
     }
 
     // Invalidate the profile cache so that the next request retrieves fresh profile data.
-    // We intentionally do not await here (making it fire-and-forget) to avoid adding
-    // Redis network round-trip latency to the response path. Since invalidateCachedProfile
-    // catches and logs errors internally, and the client receives the updated profile in the
-    // response payload, fire-and-forget is the optimal choice.
+    // We await to ensure cache consistency — failures are caught and logged internally.
     if (req.user && req.user.uid) {
-      void invalidateCachedProfile(req.user.uid);
+      try { await invalidateCachedProfile(req.user.uid); } catch (_) { /* logged internally */ }
     }
     if (req.user && req.user.id) {
-      void invalidateCachedSupabaseProfile(req.user.id);
+      try {
+        await invalidateCachedSupabaseProfile(req.user.id);
+      } catch (err) {
+        logger.warn('[profileRoutes] Failed to invalidate profile cache for user %s: %s', req.user.id, err.message);
+      }
     }
 
     res.json({
@@ -189,18 +192,10 @@ router.put('/', authenticate, userLimiter, validateBody(updateProfileSchema), as
 // UPDATE FCM TOKEN
 // Stores or clears the device FCM token for push notification delivery.
 // Invalidates Redis cache so the next authenticated request picks up the new token.
-router.put('/fcm-token', authenticate, userLimiter, async (req, res) => {
+router.put('/fcm-token', authenticate, userLimiter, validateBody(updateFcmTokenSchema), async (req, res) => {
   try {
     const userId = req.user.id;
     const { fcmToken } = req.body;
-
-    if (fcmToken === undefined) {
-      return res.status(400).json({ error: 'fcmToken is required. To clear, explicitly set to null.' });
-    }
-
-    if (fcmToken !== null && typeof fcmToken !== 'string') {
-      return res.status(400).json({ error: 'fcmToken must be a string or null.' });
-    }
 
     const { error } = await supabase
       .from('profiles')
@@ -216,15 +211,161 @@ router.put('/fcm-token', authenticate, userLimiter, async (req, res) => {
 
     // Invalidate Redis cache — next request will refetch the profile with the new token
     if (req.user.uid) {
-      void invalidateCachedProfile(req.user.uid);
+      try { await invalidateCachedProfile(req.user.uid); } catch (_) { /* logged internally */ }
     }
     if (req.user.id) {
-      void invalidateCachedSupabaseProfile(req.user.id);
+      try {
+        await invalidateCachedSupabaseProfile(req.user.id);
+      } catch (err) {
+        logger.warn('[profileRoutes] Failed to invalidate profile cache for user %s: %s', req.user.id, err.message);
+      }
     }
 
     return res.json({ success: true, message: 'FCM token updated successfully.' });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to update FCM token.', details: err.message });
+  }
+});
+
+// GET DRIVER STATEMENT
+router.get('/driver/statement', authenticate, requireRole(['driver']), userLimiter, validateQuery(driverStatementSchema), async (req, res) => {
+  const userId = req.user.id;
+  const { start_date, end_date, sort_by, format } = req.query;
+
+  try {
+    let query = supabase
+      .from('orders')
+      .select('id, order_display_id, status, pickup_address, drop_address, pickup_date, total_amount, base_freight, toll_estimate, platform_fee, created_at')
+      .eq('driver_id', userId)
+      .in('status', ['delivered', 'payment_released']);
+
+    if (start_date) {
+      query = query.gte('pickup_date', start_date);
+    }
+    if (end_date) {
+      query = query.lte('pickup_date', end_date);
+    }
+
+    const { data: trips, error } = await query.order('pickup_date', { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error: 'Failed to fetch statement records.', details: error.message });
+    }
+
+    // Compute totals
+    let totalBaseFreight = 0;
+    let totalPlatformFees = 0;
+    let totalTollEstimate = 0;
+    let totalNetEarnings = 0;
+
+    const tripsList = (trips || []).map(trip => {
+      const baseFreight = Number(trip.base_freight) || 0;
+      const platformFee = Number(trip.platform_fee) || 0;
+      const tollEstimate = Number(trip.toll_estimate) || 0;
+      const netEarnings = baseFreight - platformFee;
+
+      totalBaseFreight += baseFreight;
+      totalPlatformFees += platformFee;
+      totalTollEstimate += tollEstimate;
+      totalNetEarnings += netEarnings;
+
+      return {
+        id: trip.id,
+        order_display_id: trip.order_display_id,
+        pickup_address: trip.pickup_address,
+        drop_address: trip.drop_address,
+        pickup_date: trip.pickup_date,
+        base_freight: baseFreight,
+        platform_fee: platformFee,
+        toll_estimate: tollEstimate,
+        net_earnings: netEarnings,
+        status: trip.status
+      };
+    });
+
+    if (format === 'csv') {
+      const csvRows = [
+        ['ID', 'Order Display ID', 'Pickup Address', 'Drop Address', 'Pickup Date', 'Base Freight', 'Platform Fee', 'Toll Estimate', 'Net Earnings', 'Status'],
+        ...tripsList.map(t => [t.id, t.order_display_id, t.pickup_address, t.drop_address, t.pickup_date, t.base_freight, t.platform_fee, t.toll_estimate, t.net_earnings, t.status])
+      ];
+      const csvString = csvRows.map(row => row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',')).join('\n');
+      res.setHeader('Content-Type', 'text/csv');
+      return res.send(csvString);
+    }
+    if (sort_by === 'net_earnings') {
+      tripsList.sort((a, b) => b.net_earnings - a.net_earnings);
+    } else if (sort_by === 'base_freight') {
+      tripsList.sort((a, b) => b.base_freight - a.base_freight);
+    }
+
+    res.json({
+      summary: {
+        total_trips: tripsList.length,
+        total_base_freight: totalBaseFreight,
+        total_platform_fees: totalPlatformFees,
+        total_toll_estimate: totalTollEstimate,
+        total_net_earnings: totalNetEarnings
+      },
+      trips: tripsList
+    });
+  } catch (err) {
+    logger.error(err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// ADMIN CACHE INVALIDATION
+// Invalidates the profile cache for a specific user, forcing the next
+// authenticated request to refetch from Supabase. Use this after admin
+// operations that change role, status, or other cached profile fields.
+router.delete('/admin/cache/:userId', authenticate, requireRole(['admin']), async (req, res) => {
+  try {
+    const targetUserId = req.params.userId;
+    if (!targetUserId) {
+      return res.status(400).json({ error: 'userId path parameter is required.' });
+    }
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let profile = null;
+    let profileError = null;
+
+    if (uuidRegex.test(targetUserId)) {
+      const result = await supabase
+        .from('profiles')
+        .select('id, firebase_uid')
+        .eq('id', targetUserId)
+        .maybeSingle();
+      profile = result.data;
+      profileError = result.error;
+    }
+
+    if (!profile && !profileError) {
+      const firebaseLookup = await supabase
+        .from('profiles')
+        .select('id, firebase_uid')
+        .eq('firebase_uid', targetUserId)
+        .maybeSingle();
+
+      profile = firebaseLookup.data;
+      profileError = firebaseLookup.error;
+    }
+
+    if (profileError) {
+      return res.status(500).json({ error: 'Failed to resolve profile cache identity.', details: profileError.message });
+    }
+
+    if (!profile) {
+      return res.status(404).json({ error: 'Profile not found.' });
+    }
+
+    await Promise.all([
+      profile.firebase_uid ? invalidateCachedProfile(profile.firebase_uid) : Promise.resolve(),
+      invalidateCachedSupabaseProfile(profile.id),
+    ]);
+
+    return res.json({ success: true, message: `Cache invalidated for user ${profile.id}.` });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to invalidate profile cache.', details: err.message });
   }
 });
 

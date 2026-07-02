@@ -67,12 +67,16 @@ describe('notificationService', () => {
       expect(supabaseInsertMock).toHaveBeenCalledOnce();
       const insertArgs = supabaseInsertMock.mock.calls[0][1];
       expect(insertArgs.user_id).toBe(customerId);
+      // OTP is stored in the body so the user can see it
       expect(insertArgs.body).toContain(otp);
+      // OTP hash is stored in metadata for audit trail
+      expect(insertArgs.metadata.delivery_otp_hash).toBeDefined();
+      expect(insertArgs.metadata.delivery_otp_hash).toMatch(/^[a-f0-9]{64}$/);
 
       expect(firebaseSendMock).toHaveBeenCalledOnce();
       const sendArgs = firebaseSendMock.mock.calls[0][0];
       expect(sendArgs.token).toBe('test_token_123');
-      expect(sendArgs.notification.body).not.toContain(otp);
+      expect(sendArgs.notification.body).toContain(otp);
     });
 
     it('returns success false when both DB insert and FCM fail', async () => {

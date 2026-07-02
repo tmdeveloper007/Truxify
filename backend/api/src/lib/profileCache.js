@@ -72,7 +72,7 @@ export function isValidCachedProfile(firebaseUid, cachedProfile) {
  * a Firebase UID, so the identity field checked here is `id`.
  *
  * @param {string} userId - The expected Supabase profile UUID.
- * @param {any} cachedProfile - The cached profile to validate.
+ * @param {object|null} cachedProfile - The cached profile to validate.
  * @returns {boolean} True if the cached profile shape is valid, false otherwise.
  */
 export function isValidCachedSupabaseProfile(userId, cachedProfile) {
@@ -191,7 +191,8 @@ export async function getCachedSupabaseProfile(userId) {
  */
 export async function setCachedSupabaseProfile(userId, profile, ttlSeconds = TTL_SECONDS) {
   const redisClient = getRedisClient();
-  if (!redisClient || !userId || !profile || ttlSeconds <= 0) return;
+  if (!redisClient || !userId || !profile) return;
+  if (ttlSeconds < 1) ttlSeconds = 1;
   try {
     await redisClient.set(supabaseCacheKey(userId), JSON.stringify(profile), 'EX', ttlSeconds);
   } catch (err) {

@@ -1,6 +1,6 @@
 import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet'; // 🔒 ADDED HELMET IMPORT FOR ISSUE #361
+import { corsMiddleware } from './middleware/cors.js';
+import helmet from 'helmet'; // 🔒 ADDED HELMET IMPORT FOR ISSUES #361 & #944
 import http from 'http';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -8,8 +8,12 @@ import { globalLimiter, authLimiter, healthLimiter } from './middleware/rateLimi
 import tripRoutes from './routes/tripRoutes.js';
 import deviceRoutes from './routes/deviceRoutes.js';
 
-import { closeDbConnections, waitForMongoDb } from './config/db.js';
+
+
+import { closeDbConnections, waitForMongoDb, validateConfig } from './config/db.js';
 import { closeWebSocketServer, initWebSocketServer } from './sockets/tracker.js';
+import { attachLocationServer } from './sockets/locationServer.js';
+import { startEscrowReleaseReconciliation } from './services/escrowReleaseReconciliation.js';
 
 // Load REST routes
 import orderRoutes from './routes/orderRoutes.js';
@@ -22,18 +26,35 @@ import authRoutes from './routes/authRoutes.js';
 import healthRoutes from './routes/healthRoutes.js';
 
 import logger from './middleware/logger.js';
+import { setupSwagger } from './config/swagger.js';
 import { requestIdMiddleware, requestLogger } from './middleware/requestId.js';
 import { initSentry, flushSentry, sentryErrorHandler } from './middleware/sentry.js';
+import {
+  startEscrowRefundReconciliation,
+  stopEscrowRefundReconciliation,
+} from './services/escrowRefundReconciliation.js';
 
 // Configuration load from root folder is handled in db.js
 
 initSentry();
+
+// Validate required env vars at startup
+try {
+  validateConfig();
+} catch (err) {
+  logger.fatal(err.message);
+  process.exit(1);
+}
 
 // ============================================================================
 // STARTUP VALIDATION — crash fast, not at request time
 // ============================================================================
 if (process.env.NODE_ENV === 'production' && process.env.BYPASS_AUTH === 'true') {
   logger.fatal('BYPASS_AUTH is enabled in production. This is a severe security misconfiguration. Set BYPASS_AUTH=false (or unset it) and restart the server.');
+  process.exit(1);
+}
+if (process.env.NODE_ENV === 'production' && !process.env.ML_API_KEY) {
+  logger.fatal('ML_API_KEY is not set. ML engine calls will fail with 401 errors. Set ML_API_KEY and restart.');
   process.exit(1);
 }
 if (!process.env.DRIVER_LOGIN_OTP) {
@@ -47,7 +68,7 @@ app.set('trust proxy', 1);
 
 // ============================================================================
 // 🔒 ADVANCED SECURITY HEADERS (HELMET CONFIGURATION)
-// Resolves missing security headers from Issue #361
+// Resolves missing security headers from Issues #361 and #944
 // ============================================================================
 app.use(helmet({
   // Content Security Policy (CSP) - Prevents XSS and data injection
@@ -82,50 +103,7 @@ app.use(helmet({
   xssFilter: true
 }));
 
-// ============================================================================
-// CORS CONFIGURATION
-// ============================================================================
-// Enable CORS for frontend clients (Flutter Web, mobile, etc.)
-const corsOrigins = process.env.NODE_ENV === 'production'
-  ? (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean)
-  : '*';
-// Enable CORS only for explicitly allowed frontend origins
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter((origin) => {
-    if (!origin) return false;
-    try {
-      const parsed = new URL(origin);
-      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-    } catch {
-      return false;
-    }
-  });
-
-// In production, x-user-id / x-user-role / x-user-name must NOT be accepted
-// as authentication headers — only expose them in non-production.
-const corsAllowedHeaders = process.env.NODE_ENV === 'production'
-  ? ['Content-Type', 'Authorization']
-  : ['Content-Type', 'Authorization', 'x-user-id', 'x-user-role', 'x-user-name'];
-
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow non-browser/same-origin requests with no Origin header
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-
-    // In development/testing, allow localhost or loopback origins
-    if (process.env.NODE_ENV !== 'production') {
-      const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-      if (isLocalhost) return callback(null, true);
-    }
-
-    return callback(null, false);
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: corsAllowedHeaders,
-}));
+app.use(corsMiddleware);
 
 // ── Production header sanitization (defense in depth) ────────────────
 // Even if a proxy or misconfiguration lets dev auth headers through,
@@ -170,6 +148,10 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/devices', deviceRoutes);
 app.use('/api/trucks', truckRoutes);
 app.use('/api/auth', authLimiter, authRoutes);
+
+// Setup Swagger Documentation
+setupSwagger(app);
+
 // Root route
 app.get('/', (req, res) => {
   res.send('<h1>Truxify Backend API is running.</h1><p>Use WebSockets at <code>ws://localhost:5000/ws/tracking</code></p>');
@@ -203,6 +185,8 @@ const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
   logger.info(`Truxify API listening on port ${PORT}`);
+  startEscrowRefundReconciliation();
+  startEscrowReleaseReconciliation();
 });
 
 // ============================================================================
@@ -212,6 +196,7 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
 
 async function shutdown(signal) {
   logger.info(`${signal} received — draining connections...`);
+  stopEscrowRefundReconciliation();
 
   const forceExit = setTimeout(() => {
     logger.error('[shutdown] Timeout exceeded — forcing exit.');

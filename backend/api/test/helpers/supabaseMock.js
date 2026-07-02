@@ -125,6 +125,11 @@ class SupabaseQueryBuilder {
       case 'lte':
         res = v <= f.val;
         break;
+      case 'ilike': {
+        const valRegex = new RegExp(f.val.replace(/%/g, '.*'), 'i');
+        res = valRegex.test(v);
+        break;
+      }
       case 'in': {
         if (typeof f.val === 'string') {
           const clean = f.val.replace(/^\s*\(\s*|\s*\)\s*$/g, '');

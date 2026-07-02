@@ -5,10 +5,11 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 import { userLimiter } from '../middleware/rateLimiter.js';
 
 import { validateBody } from '../middleware/validate.js';
-import { driverOnlineSchema, withdrawSchema } from '../validation/requestSchemas.js';
+import { driverOnlineSchema, withdrawSchema, otpSendSchema } from '../validation/requestSchemas.js';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import logger from '../middleware/logger.js';
+import { generateAndStoreOtp, verifyOtp } from '../services/otpService.js';
 
 const router = express.Router();
 
@@ -18,7 +19,39 @@ const loginOtpSchema = z.object({
   otp: z.string().regex(/^\d{4}$/, { message: 'OTP must be 4 digits' }),
 });
 
-const verifyLoginOtpLimiter = rateLimit({
+export function otpPhoneKey(phone) {
+  if (typeof phone !== 'string') {
+    return 'phone:unknown';
+  }
+
+  const digits = phone.replace(/\D/g, '');
+  if (!digits) {
+    return 'phone:unknown';
+  }
+
+  const nationalDigits = digits.length === 12 && digits.startsWith('91')
+    ? digits.slice(2)
+    : digits;
+
+  return `phone:${nationalDigits}`;
+}
+
+function perPhoneLimiter(opts) {
+  return rateLimit({
+    ...opts,
+    keyGenerator: (req) => otpPhoneKey(req.body.phone),
+  });
+}
+
+const sendOtpLimiter = perPhoneLimiter({
+  windowMs: 60 * 1000,
+  max: 1,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many OTP requests. Please wait before requesting again.' },
+});
+
+const verifyOtpLimiter = perPhoneLimiter({
   windowMs: 15 * 60 * 1000,
   max: 5,
   standardHeaders: true,
@@ -26,27 +59,22 @@ const verifyLoginOtpLimiter = rateLimit({
   message: { error: 'Too many OTP verification attempts. Please try again later.' },
 });
 
-router.post('/otp/verify', verifyLoginOtpLimiter, validateBody(loginOtpSchema), async (req, res) => {
+router.post('/otp/send', sendOtpLimiter, validateBody(otpSendSchema), async (req, res) => {
+  const { phone } = req.body;
+  const otp = await generateAndStoreOtp(phone);
+  if (!otp) {
+    return res.status(503).json({ error: 'OTP service unavailable. Please try again later.' });
+  }
+  return res.json({ message: 'OTP sent successfully.' });
+});
+
+router.post('/otp/verify', verifyOtpLimiter, validateBody(loginOtpSchema), async (req, res) => {
   const { phone, otp } = req.body;
-  const expectedOtp = process.env.DRIVER_LOGIN_OTP?.trim();
-  if (!expectedOtp) {
-    return res.status(503).json({
-      error: 'Driver login OTP verification is not configured on this server.',
-    });
-  }
-
-  if (process.env.DRIVER_LOGIN_PHONE && phone !== process.env.DRIVER_LOGIN_PHONE.trim()) {
-    return res.status(400).json({ error: 'Invalid phone number for OTP verification.' });
-  }
-
-  if (otp !== expectedOtp) {
+  const valid = await verifyOtp(phone, otp);
+  if (!valid) {
     return res.status(400).json({ error: 'Invalid OTP. Please try again.' });
   }
-
-  return res.json({
-    message: 'OTP verified successfully.',
-    verified: true,
-  });
+  return res.json({ message: 'OTP verified successfully.', verified: true });
 });
 
 // ============================================================================
@@ -94,10 +122,6 @@ router.get('/stats', authenticate, userLimiter, requireRole(['driver']), async (
 // ============================================================================
 router.put('/online', authenticate, userLimiter, requireRole(['driver']), validateBody(driverOnlineSchema), async (req, res) => {
   const { is_online } = req.body;
-
-  if (typeof is_online !== 'boolean') {
-    return res.status(400).json({ error: 'Invalid or missing is_online status.' });
-  }
 
   try {
     const { data: details, error } = await supabase
@@ -220,21 +244,46 @@ router.get('/earnings/summary', authenticate, userLimiter, requireRole(['driver'
 // ============================================================================
 router.get('/trips', authenticate, userLimiter, requireRole(['driver']), async (req, res) => {
   const { status } = req.query;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
+  const pageParam = req.query.page ?? '1';
+  const limitParam = req.query.limit ?? '10';
+  const rawPage = req.query.page;
+  const rawLimit = req.query.limit;
+  const parsedPage = parseInt(rawPage, 10);
+  const parsedLimit = parseInt(rawLimit, 10);
+  if (rawPage !== undefined && (!Number.isInteger(parsedPage) || parsedPage < 1)) {
+    return res.status(400).json({ error: 'page must be a positive integer' });
+  }
+  if (rawLimit !== undefined && (!Number.isInteger(parsedLimit) || parsedLimit < 1)) {
+    return res.status(400).json({ error: 'limit must be a positive integer' });
+  }
+  const page = parsedPage || 1;
+  const limit = Math.min(100, Math.max(1, parsedLimit || 10));
 
   try {
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
     let query = supabase
       .from('trips')
-      .select('*')
+      .select('*', { count: 'exact' })
       .eq('driver_id', req.user.id);
 
     if (status) {
       query = query.eq('status', status);
     }
 
-    const { data: trips, error } = await query.order('trip_date', { ascending: false });
+    const { data: trips, error, count } = await query.order('trip_date', { ascending: false }).range(from, to);
 
     if (error) return res.status(500).json({ error: 'Failed to fetch trips.', details: error.message });
-    res.json(trips || []);
+    res.json({
+      page,
+      limit,
+      total: count || 0,
+      totalPages: Math.ceil((count || 0) / limit),
+      trips: trips || []
+    });
   } catch (err) {
     res.status(500).json({ error: 'Internal Server Error' });
   }
@@ -302,14 +351,38 @@ router.get('/trips/:tripDisplayId/route-points', authenticate, userLimiter, requ
 // ============================================================================
 router.get('/bids', authenticate, userLimiter, requireRole(['driver']), async (req, res) => {
   try {
-    const { data: bids, error } = await supabase
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
+    const rawPage = req.query.page;
+    const rawLimit = req.query.limit;
+    const parsedPage = parseInt(rawPage, 10);
+    const parsedLimit = parseInt(rawLimit, 10);
+    if (rawPage !== undefined && (!Number.isInteger(parsedPage) || parsedPage < 1)) {
+      return res.status(400).json({ error: 'page must be a positive integer' });
+    }
+    if (rawLimit !== undefined && (!Number.isInteger(parsedLimit) || parsedLimit < 1)) {
+      return res.status(400).json({ error: 'limit must be a positive integer' });
+    }
+    const page = parsedPage || 1;
+    const limit = Math.min(100, Math.max(1, parsedLimit || 10));
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    const { data: bids, error, count } = await supabase
       .from('load_bids')
-      .select('*')
+      .select('*', { count: 'exact' })
       .eq('driver_id', req.user.id)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .range(from, to);
 
     if (error) return res.status(500).json({ error: 'Failed to fetch bids.', details: error.message });
-    res.json(bids || []);
+    res.json({
+      page,
+      limit,
+      total: count || 0,
+      totalPages: Math.ceil((count || 0) / limit),
+      bids: bids || []
+    });
   } catch (err) {
     res.status(500).json({ error: 'Internal Server Error' });
   }

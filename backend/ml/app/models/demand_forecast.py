@@ -12,6 +12,11 @@ logger = logging.getLogger(__name__)
 
 MODEL_NAME = "demand_forecast"
 
+# NOTE: This module currently trains on synthetic (randomly generated) data
+# as a placeholder. Replace generate_synthetic_demand_data() with a real
+# data pipeline that loads historical trip/demand data from PostgreSQL or
+# MongoDB to make predictions meaningful.
+
 
 def generate_synthetic_demand_data(n_samples: int = 2000) -> tuple:
     np.random.seed(42)
@@ -86,8 +91,12 @@ def train_demand_forecast_model() -> dict:
 
 
 def predict_demand(features: List[float]) -> Optional[float]:
+    if len(features) != len(FEATURE_NAMES):
+        raise ValueError(f"Invalid input tensor shape. Expected {len(FEATURE_NAMES)} features, got {len(features)}")
+        
     if not model_exists(MODEL_NAME):
         train_demand_forecast_model()
+
 
     loaded = load_model(MODEL_NAME)
     if loaded is None:

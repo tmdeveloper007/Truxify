@@ -15,6 +15,10 @@ const RECOVERY_FILE_PATH = path.join(os.tmpdir(), 'truxify-telemetry-recovery.js
 // In-memory mapping of active client subscriptions
 const trackingSubscriptions = new Map();
 
+// Cached Supabase Realtime channels keyed by orderUUID to avoid creating a new
+// channel per location ping. Reused across pings and cleaned up on disconnect.
+const locationChannels = new Map();
+
 // =====================================================================
 // CLOCK SKEW & CIRCUIT BREAKER CONFIGURATION (#596)
 // =====================================================================
@@ -30,7 +34,9 @@ const BUFFER_WARN_THRESHOLD = 0.5;
 const BUFFER_CRIT_THRESHOLD = 0.8;
 const BUFFER_MONITOR_INTERVAL_MS = 30000;
 let telemetryWriteBuffer = [];
+let telemetryFlushBuffer = [];
 let currentFlushPromise = null;
+let flushMutex = false;
 const BUFFER_FLUSH_INTERVAL_MS = 20000;
 let flushBackoffMs = 1000;
 let isSchedulerActive = false;
@@ -38,6 +44,12 @@ let telemetryFlushTimeout = null;
 let wsServer = null;
 let wsHeartbeatInterval = null;
 let telemetryMonitorInterval = null;
+
+// Observability counters
+let telemetryTotalFlushed = 0;
+let telemetryTotalDropped = 0;
+let telemetryRaceDropped = 0;
+let telemetryOverflowDropped = 0;
 
 const WS_UPGRADE_RATE_LIMIT = 5;
 const WS_UPGRADE_RATE_WINDOW_SECONDS = 60;
@@ -331,7 +343,25 @@ export async function handleLocationPing(ws, data) {
   const { driver_id: payloadDriverId, speed, bearing, device_timestamp } = data;
 
   if (payloadDriverId && payloadDriverId !== driver_id) {
-    return ws.send(JSON.stringify({ error: 'Unauthorized: driver_id does not match authenticated WebSocket identity.' }));
+    const clientIp = ws.upgradeReq?.socket?.remoteAddress || 'unknown';
+    logger.error({
+      event: 'SPOOFED_LOCATION_ATTEMPT',
+      authenticatedDriver: driver_id,
+      attemptedDriver: payloadDriverId,
+      ip: clientIp,
+      timestamp: new Date().toISOString(),
+    }, 'Location spoofing attempt detected: Driver ID mismatch');
+
+    if (typeof ws.close === 'function') {
+      ws.close(4010, 'Spoofed location detected: Driver ID mismatch');
+    }
+    return;
+  }
+
+  // Also validate if payload provides driver_id that it must not be different
+  if (!payloadDriverId) {
+    // If not provided, add the authenticated driver_id to data
+    data.driver_id = driver_id;
   }
 
   const lat = data.lat !== undefined ? data.lat : data.latitude;
@@ -432,12 +462,13 @@ export async function handleLocationPing(ws, data) {
     }
   }
 
-  // Buffer write with capacity limit
+  // Buffer write with capacity limit (always push to active buffer)
   if (telemetryWriteBuffer.length >= MAX_BUFFER_SIZE) {
     const dropCount = Math.floor(MAX_BUFFER_SIZE * 0.1);
     telemetryWriteBuffer.splice(0, dropCount);
-    telemetryDropCounter += dropCount;
-    logger.warn(`[TRUXIFY BUFFER WARN] Telemetry buffer full: dropped ${dropCount} oldest records. Total dropped: ${telemetryDropCounter}. Size: ${telemetryWriteBuffer.length}/${MAX_BUFFER_SIZE}`);
+    telemetryTotalDropped += dropCount;
+    telemetryOverflowDropped += dropCount;
+    logger.warn(`[TRUXIFY BUFFER WARN] Telemetry buffer full: dropped ${dropCount} oldest records. Total dropped: ${telemetryTotalDropped}. Size: ${telemetryWriteBuffer.length}/${MAX_BUFFER_SIZE}`);
   }
   telemetryWriteBuffer.push({
     driver_id,
@@ -511,8 +542,14 @@ export async function handleLocationPing(ws, data) {
   }
 
   // Publish to Supabase Realtime channel driver-location:{orderId}
+  // Reuse cached channel to avoid creating a new channel per ping.
   if (supabase && orderUUID) {
-    const channel = supabase.channel(`driver-location:${orderUUID}`);
+    if (!locationChannels.has(orderUUID)) {
+      const channel = supabase.channel(`driver-location:${orderUUID}`);
+      channel.subscribe();
+      locationChannels.set(orderUUID, channel);
+    }
+    const channel = locationChannels.get(orderUUID);
     channel.send({
       type: 'broadcast',
       event: 'location',
@@ -523,11 +560,8 @@ export async function handleLocationPing(ws, data) {
         lng,
         timestamp: new Date(serverNow).toISOString()
       }
-    }).then(() => {
-      supabase.removeChannel(channel);
     }).catch((err) => {
       logger.error('Failed to broadcast realtime location to Supabase:', err.message);
-      supabase.removeChannel(channel);
     });
   }
 }
@@ -540,7 +574,7 @@ async function flushTelemetryBuffer() {
     return currentFlushPromise;
   }
 
-  if (telemetryWriteBuffer.length === 0) {
+  if (telemetryWriteBuffer.length === 0 && telemetryFlushBuffer.length === 0) {
     flushBackoffMs = 1000;
     return;
   }
@@ -550,22 +584,36 @@ async function flushTelemetryBuffer() {
     return;
   }
 
-  currentFlushPromise = (async () => {
-    const recordsToFlush = [...telemetryWriteBuffer];
-    telemetryWriteBuffer = [];
+  if (flushMutex) return;
+  flushMutex = true;
 
+  // Atomic double-buffer swap: copy flushBuffer, then swap references so active buffer
+  // becomes the new flush buffer and a fresh active buffer is created.
+  // Any concurrent push to the old active buffer is captured in the flush buffer for next cycle.
+  const recordsToFlush = telemetryFlushBuffer.length > 0 ? telemetryFlushBuffer : telemetryWriteBuffer;
+  if (telemetryFlushBuffer.length > 0) {
+    telemetryFlushBuffer = [];
+  }
+  telemetryFlushBuffer = telemetryWriteBuffer;
+  telemetryWriteBuffer = [];
+
+  flushMutex = false;
+
+  if (recordsToFlush.length === 0) return;
+
+  currentFlushPromise = (async () => {
     logger.info(`[TRUXIFY BATCH CONTROL] Committing bulk cluster of ${recordsToFlush.length} spatial rows to MongoDB...`);
 
     try {
       const collection = getMongoDb().collection('telemetry');
       await collection.insertMany(recordsToFlush, { ordered: false });
-      logger.info(`[TRUXIFY DB SUCCESS] Successfully flushed ${recordsToFlush.length} records to MongoDB telemetry collection.`);
+      telemetryTotalFlushed += recordsToFlush.length;
+      logger.info(`[TRUXIFY DB SUCCESS] Successfully flushed ${recordsToFlush.length} records to MongoDB telemetry collection. Total flushed: ${telemetryTotalFlushed}`);
       flushBackoffMs = 1000;
     } catch (err) {
       const isBulkWriteError = err.code === 121 || err.name === 'BulkWriteError' || err.message.includes('Document failed validation');
 
       if (isBulkWriteError) {
-        // Log individual failure details without dropping entire batch
         if (err.writeErrors && err.writeErrors.length > 0) {
           const sampleErrors = err.writeErrors.slice(0, 5).map(e =>
             `doc ${e.index}: ${e.err?.message || 'unknown'}`
@@ -574,32 +622,31 @@ async function flushTelemetryBuffer() {
         } else {
           logger.error(`[TRUXIFY VALIDATION] Bulk insert validation error: ${err.message}`);
         }
-        // Only drop the failing records; retry the rest
+        // Prepend succeeded records to the FRONT for oldest-first retry priority
         const succeeded = err.writeErrors
           ? recordsToFlush.filter((_, i) => !err.writeErrors.some(e => e.index === i))
           : [];
         if (succeeded.length > 0) {
-          telemetryWriteBuffer = [...succeeded, ...telemetryWriteBuffer];
-          if (telemetryWriteBuffer.length > MAX_BUFFER_SIZE) {
-            const overflowDrop = telemetryWriteBuffer.length - MAX_BUFFER_SIZE;
-            telemetryWriteBuffer.splice(0, overflowDrop);
-            telemetryDropCounter += overflowDrop;
+          telemetryFlushBuffer = [...succeeded, ...telemetryFlushBuffer];
+          if (telemetryFlushBuffer.length > MAX_BUFFER_SIZE) {
+            const overflowDrop = telemetryFlushBuffer.length - MAX_BUFFER_SIZE;
+            telemetryFlushBuffer.splice(0, overflowDrop);
+            telemetryTotalDropped += overflowDrop;
+            telemetryOverflowDropped += overflowDrop;
             logger.warn(`[TRUXIFY BUFFER DROP] Dropped ${overflowDrop} oldest records due to capacity after partial insert.`);
           }
         }
       } else {
         flushBackoffMs = Math.min(flushBackoffMs * 2, 60000);
-
-        // Atomic buffer swap: snapshot current buffer and merge with retry batch
-        const currentSnapshot = telemetryWriteBuffer;
-        telemetryWriteBuffer = recordsToFlush;
-        const overflow = telemetryWriteBuffer.length + currentSnapshot.length - MAX_BUFFER_SIZE;
-        if (overflow > 0) {
-          telemetryWriteBuffer.splice(0, overflow);
-          telemetryDropCounter += overflow;
-          logger.warn(`[TRUXIFY BUFFER DROP] Capacity limit: dropped ${overflow} oldest records from retry merge. Total dropped: ${telemetryDropCounter}`);
+        // Prepend failed records to the FRONT for oldest-first retry priority
+        telemetryFlushBuffer = [...recordsToFlush, ...telemetryFlushBuffer];
+        if (telemetryFlushBuffer.length > MAX_BUFFER_SIZE) {
+          const overflowDrop = telemetryFlushBuffer.length - MAX_BUFFER_SIZE;
+          telemetryFlushBuffer.splice(0, overflowDrop);
+          telemetryTotalDropped += overflowDrop;
+          telemetryOverflowDropped += overflowDrop;
+          logger.warn(`[TRUXIFY BUFFER DROP] Capacity limit: dropped ${overflowDrop} oldest records from retry merge. Total dropped: ${telemetryTotalDropped}`);
         }
-        telemetryWriteBuffer.push(...currentSnapshot);
       }
     } finally {
       currentFlushPromise = null;
@@ -610,16 +657,21 @@ async function flushTelemetryBuffer() {
 }
 
 function monitorBufferSize() {
-  const usagePct = telemetryWriteBuffer.length / MAX_BUFFER_SIZE;
+  const activeLen = telemetryWriteBuffer.length;
+  const flushLen = telemetryFlushBuffer.length;
+  const totalLen = activeLen + flushLen;
+  const usagePct = totalLen / MAX_BUFFER_SIZE;
   if (usagePct >= BUFFER_CRIT_THRESHOLD) {
     logger.warn(
       `[TRUXIFY BUFFER MONITOR] CRITICAL: Buffer at ${(usagePct * 100).toFixed(0)}% ` +
-      `(${telemetryWriteBuffer.length}/${MAX_BUFFER_SIZE})`
+      `(${totalLen}/${MAX_BUFFER_SIZE}) [active=${activeLen} flush=${flushLen}] ` +
+      `flushed=${telemetryTotalFlushed} dropped=${telemetryTotalDropped}`
     );
   } else if (usagePct >= BUFFER_WARN_THRESHOLD) {
     logger.warn(
       `[TRUXIFY BUFFER MONITOR] WARNING: Buffer at ${(usagePct * 100).toFixed(0)}% ` +
-      `(${telemetryWriteBuffer.length}/${MAX_BUFFER_SIZE})`
+      `(${totalLen}/${MAX_BUFFER_SIZE}) [active=${activeLen} flush=${flushLen}] ` +
+      `flushed=${telemetryTotalFlushed} dropped=${telemetryTotalDropped}`
     );
   }
 }
@@ -852,6 +904,17 @@ async function removeClientFromAllSubscriptions(ws) {
     }
     if (clients.size === 0) {
       trackingSubscriptions.delete(key);
+      // Clean up the cached Supabase Realtime channel for this orderUUID
+      // so channels do not leak after the last subscriber disconnects.
+      if (locationChannels.has(key)) {
+        const channel = locationChannels.get(key);
+        // Guard against supabase being null (e.g. not configured in dev/test environments)
+        if (supabase) {
+          supabase.removeChannel(channel);
+        }
+        locationChannels.delete(key);
+        logger.info(`🔌 Removed Supabase Realtime channel for order "${key}" on last subscriber disconnect.`);
+      }
     }
   });
 

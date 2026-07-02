@@ -3,6 +3,7 @@ import { supabase } from '../config/db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { userLimiter } from '../middleware/rateLimiter.js';
 import logger from '../middleware/logger.js';
+import { loadFilterQuerySchema } from '../validation/loadSchemas.js';
 
 const router = express.Router();
 
@@ -12,6 +13,18 @@ const router = express.Router();
 // ============================================================================
 router.get('/', authenticate, userLimiter, requireRole(['driver']), async (req, res) => {
   try {
+    const filterResult = loadFilterQuerySchema.safeParse(req.query);
+    if (!filterResult.success) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: filterResult.error.issues.map(issue => ({
+          field: issue.path.join('.') || 'query',
+          message: issue.message,
+        })),
+      });
+    }
+    const filters = filterResult.data;
+
     const pageVal = req.query.page || '1';
     const limitVal = req.query.limit || '10';
 
@@ -35,7 +48,11 @@ router.get('/', authenticate, userLimiter, requireRole(['driver']), async (req, 
 
     // Handle vehicle_type filtering in JS to avoid database column errors.
     // Default mapped vehicle_type is 'Truck'. If they filter by something else, return empty.
-    if (req.query.vehicle_type && req.query.vehicle_type.toLowerCase() !== 'truck') {
+    if (req.query.vehicle_type && typeof req.query.vehicle_type !== 'string') {
+      return res.status(400).json({ error: 'vehicle_type must be a single string' });
+    }
+    const vehicleType = req.query.vehicle_type || '';
+    if (vehicleType && vehicleType.toLowerCase() !== 'truck') {
       return res.json({
         page,
         limit,
@@ -52,7 +69,6 @@ router.get('/', authenticate, userLimiter, requireRole(['driver']), async (req, 
       .from('load_offers')
       .select('*', { count: 'exact' });
 
-    // Status filter - map 'open'/'available' to the DB's status 'available'
     let statusFilter = 'available';
     if (req.query.status) {
       if (typeof req.query.status !== 'string') {
@@ -72,32 +88,40 @@ router.get('/', authenticate, userLimiter, requireRole(['driver']), async (req, 
     }
     query = query.eq('status', statusFilter);
 
+    // Escape LIKE special chars in user input to prevent injection
+    const escapeLike = (s) => String(s).replace(/[%_\\]/g, '\\$&');
+
     // Filters
     if (req.query.pickup_location) {
-      query = query.ilike('pickup_address', `%${req.query.pickup_location}%`);
+      const pickupLocation = Array.isArray(req.query.pickup_location) ? req.query.pickup_location[0] : req.query.pickup_location;
+      if (pickupLocation.length > 200) {
+        return res.status(400).json({ error: 'pickup_location too long (max 200 chars)' });
+      }
+      query = query.ilike('pickup_address', `%${escapeLike(pickupLocation)}%`);
     }
     if (req.query.destination) {
-      query = query.ilike('drop_address', `%${req.query.destination}%`);
+      const destination = Array.isArray(req.query.destination) ? req.query.destination[0] : req.query.destination;
+      if (destination.length > 200) {
+        return res.status(400).json({ error: 'destination too long (max 200 chars)' });
+      }
+      query = query.ilike('drop_address', `%${escapeLike(destination)}%`);
     }
     if (req.query.goods_type) {
+      if (typeof req.query.goods_type !== 'string') {
+        return res.status(400).json({ error: 'goods_type must be a single string' });
+      }
       query = query.eq('goods_type', req.query.goods_type);
     }
-    if (req.query.min_price) {
-      const min = parseFloat(req.query.min_price);
-      if (isNaN(min) || min < 0) return res.status(400).json({ error: 'min_price must be a non-negative number' });
+    if (filters.min_price !== undefined) {
       // Map min_price (in Rupees) to freight_value (in paisa)
-      query = query.gte('freight_value', Math.round(min * 100));
+      query = query.gte('freight_value', Math.round(filters.min_price * 100));
     }
-    if (req.query.max_price) {
-      const max = parseFloat(req.query.max_price);
-      if (isNaN(max) || max < 0) return res.status(400).json({ error: 'max_price must be a non-negative number' });
+    if (filters.max_price !== undefined) {
       // Map max_price (in Rupees) to freight_value (in paisa)
-      query = query.lte('freight_value', Math.round(max * 100));
+      query = query.lte('freight_value', Math.round(filters.max_price * 100));
     }
-    if (req.query.distance) {
-      const maxDistance = parseFloat(req.query.distance);
-      if (isNaN(maxDistance) || maxDistance < 0) return res.status(400).json({ error: 'distance must be a non-negative number' });
-      query = query.lte('extra_distance_km', maxDistance);
+    if (filters.distance !== undefined) {
+      query = query.lte('extra_distance_km', filters.distance);
     }
 
     // Sorting

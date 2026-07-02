@@ -25,6 +25,7 @@ import logger from '../middleware/logger.js';
 // Minimal ABI — only the subset the backend needs to call.
 const REPUTATION_ABI = [
   'function increaseReputation(address driver, uint256 points) external',
+  'function decreaseReputation(address driver, uint256 points) external',
   'function getReputation(address driver) external view returns (uint256)',
 ];
 /** @type {ethers.Contract | null} */
@@ -84,10 +85,16 @@ export async function awardReputationPoints(driverWalletAddress, stars) {
     logger.warn(`[reputation] Invalid driver wallet address "${driverWalletAddress}" — skipping.`);
     return;
   }
-  const tx = await reputationContract.increaseReputation(driverWalletAddress, stars);
-  logger.info(`[reputation] increaseReputation tx submitted: ${tx.hash}`);
-  await tx.wait(1); // wait for 1 confirmation
-  logger.info(`[reputation] increaseReputation confirmed for driver ${driverWalletAddress} (+${stars} pts).`);
+  try {
+    const tx = await reputationContract.increaseReputation(driverWalletAddress, stars);
+    logger.info(`[reputation] increaseReputation tx submitted: ${tx.hash}`);
+    await tx.wait(1); // wait for 1 confirmation
+    logger.info(`[reputation] increaseReputation confirmed for driver ${driverWalletAddress} (+${stars} pts).`);
+  } catch (err) {
+    // Blockchain errors must never propagate as unhandled rejections — this function
+    // is fire-and-forget on the critical path. Log and drop.
+    logger.error(`[reputation] increaseReputation failed for driver ${driverWalletAddress}: ${err.message}`);
+  }
 }
 
 /**
@@ -118,4 +125,3 @@ export async function getDriverReputation(walletAddress) {
     return null;
   }
 }
-

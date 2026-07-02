@@ -36,7 +36,10 @@ class _TripsScreenState extends State<TripsScreen> {
   Map<String, List<Map<String, dynamic>>> _routePointsByTripId = {};
 
   bool _isLoadingTrips = true;
+
   String? _tripsError;
+  String? _nextTripsCursor;
+  bool _hasMoreTrips = true;
 
   bool _marketplaceLoading = false;
   String? _marketplaceError;
@@ -70,10 +73,13 @@ class _TripsScreenState extends State<TripsScreen> {
     setState(() {
       _isLoadingTrips = true;
       _tripsError = null;
+      _nextTripsCursor = null;
+      _hasMoreTrips = true;
     });
 
     try {
-      final trips = await _tripService.fetchTrips();
+      final result = await _tripService.fetchTripHistory(limit: 20);
+      final trips = result['trips'] as List<Map<String, dynamic>>;
 
       final stopsByTrip = <String, List<Map<String, dynamic>>>{};
       final routePointsByTrip = <String, List<Map<String, dynamic>>>{};
@@ -96,6 +102,8 @@ class _TripsScreenState extends State<TripsScreen> {
         _trips = trips;
         _tripStopsByTripId = stopsByTrip;
         _routePointsByTripId = routePointsByTrip;
+        _nextTripsCursor = result['nextCursor'] as String?;
+        _hasMoreTrips = result['hasMore'] as bool? ?? false;
         _isLoadingTrips = false;
       });
     } catch (e) {
@@ -107,6 +115,7 @@ class _TripsScreenState extends State<TripsScreen> {
       });
     }
   }
+
 
   Future<void> _completeCurrentStop(String tripId) async {
     final stops = _tripStopsByTripId[tripId] ?? [];
@@ -842,7 +851,7 @@ class _TripsScreenState extends State<TripsScreen> {
         break;
       case TripStatusType.completed:
         statusColor = TruxifyColors.success;
-        statusBgColor = const Color(0xFFE8F5E9);
+        statusBgColor = TruxifyColors.successLight;
         statusLabel = 'Completed';
         break;
       case TripStatusType.cancelled:
@@ -959,7 +968,7 @@ class _TripsScreenState extends State<TripsScreen> {
                                       color: Theme.of(context).brightness ==
                                               Brightness.dark
                                           ? TruxifyColors.darkAccentLight
-                                          : const Color(0xFFFDEAEA),
+                                          : TruxifyColors.accentLight,
                                       border: Border.all(
                                           color: TruxifyColors.border),
                                       borderRadius: BorderRadius.circular(20),
@@ -1017,7 +1026,7 @@ class _TripsScreenState extends State<TripsScreen> {
     if (routePoints.isEmpty) {
       return Container(
         decoration: BoxDecoration(
-          color: const Color(0xFFF0E8E8),
+          color: TruxifyColors.subtleBorder,
           borderRadius: BorderRadius.circular(8),
         ),
         child: const Center(
