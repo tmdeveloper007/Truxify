@@ -5,6 +5,7 @@ import logger from '../middleware/logger.js';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 
 let mongoDbOverride = null;
 const getMongoDb = () => mongoDbOverride || mongoDb;
@@ -15,7 +16,7 @@ const RECOVERY_FILE_PATH = process.env.RECOVERY_FILE_PATH || path.join(os.tmpdir
 function scrubPII(record) {
   const scrubbed = { ...record };
   if (scrubbed.driver_id) {
-    scrubbed.driver_id = 'scrubbed:' + require('crypto').createHash('sha256').update(scrubbed.driver_id).digest('hex').slice(0, 12);
+    scrubbed.driver_id = 'scrubbed:' + crypto.createHash('sha256').update(scrubbed.driver_id).digest('hex').slice(0, 12);
   }
   if (typeof scrubbed.lat === 'number') {
     scrubbed.lat = Math.round(scrubbed.lat * 100) / 100;
