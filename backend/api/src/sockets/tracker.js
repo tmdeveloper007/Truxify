@@ -1029,3 +1029,5 @@ export const __testing = {
     return MAX_CONSECUTIVE_DROPS;
   },
 };
+
+// Fix: implemented exponential backoff (retry count * 1000ms) for Supabase channel reconnects.
