@@ -174,9 +174,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final results = await Future.wait([
-        _earningsService.fetchTodayEarningsSummary(),
-        _earningsService.fetchDriverStats(),
-        _tripService.fetchTripHistory(limit: 50),
+        _earningsService.fetchTodayEarningsSummary().catchError((_) => null),
+        _earningsService.fetchDriverStats().catchError((_) => null),
+        _tripService.fetchTripHistory(limit: 50).catchError((_) => null),
       ]);
 
       if (!mounted) return;
