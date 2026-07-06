@@ -14,9 +14,6 @@ export const osrmBreaker = new CircuitBreaker(async (url, options) => {
   resetTimeout: 30000
 });
 
-osrmBreaker.fallback(() => {
-  throw new Error('[OSRM] Service temporarily unavailable due to high failure rate. Circuit open.');
-});
 
 const DEFAULT_OSRM_BASE_URL = 'https://router.project-osrm.org';
 const DEFAULT_TIMEOUT_MS = 1500;
@@ -114,7 +111,7 @@ export async function getRouteEstimate({ pickupLat, pickupLng, dropLat, dropLng 
       clearTimeout(timeout);
       if (attempt < maxRetries - 1) {
         const delayMs = baseDelayMs * Math.pow(2, attempt);
-        if (err.message.includes('Circuit open')) {
+        if (err.code === 'EOPENBREAKER' || err.message.includes('Breaker is open')) {
           logger.warn('[OSRM] Circuit is open. Falling back instantly.');
           return null; // Return null so caller knows to use straight-line fallback
         }
