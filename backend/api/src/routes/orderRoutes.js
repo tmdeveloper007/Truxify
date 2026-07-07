@@ -35,18 +35,37 @@ import {
 } from '../services/escrow.js';
 import { BidAcceptanceService, DomainError } from '../services/order/bidAcceptanceService.js';
 import {
-  sendDeliveryOtpNotification,
-  storeDeliveryOtp,
   getActiveDeliveryOtp,
   verifyDeliveryOtp,
-  expireDeliveryOtps
+  expireDeliveryOtps,
 } from '../services/notificationService.js';
+import {
+  OrderNotificationService,
+  checkOtpLockout,
+  recordOtpFailure,
+  clearOtpState,
+  OTP_TTL_MINUTES,
+  OTP_LOCKOUT_MINUTES,
+  OTP_MAX_FAILED_ATTEMPTS,
+  DELIVERY_OTP_READY_STATUSES,
+} from '../services/order/orderNotificationService.js';
 import { predictDemand, predictPrice } from '../services/ml.js';
 import { requireIdempotency } from '../middleware/idempotency.js';
 import { acquireLock, releaseLock } from '../lib/redisLock.js';
 import logger from '../middleware/logger.js';
 
 const router = express.Router();
+const orderNotificationService = new OrderNotificationService();
+
+// Request input validation helper for order endpoints
+function validateOrderInput(body) {
+  const errors = [];
+  if (!body.customer_id) errors.push('customer_id is required');
+  if (!body.origin) errors.push('origin is required');
+  if (!body.destination) errors.push('destination is required');
+  if (!body.goods_type) errors.push('goods_type is required');
+  return errors.length > 0 ? { valid: false, errors } : { valid: true };
+}
 
 // ── OTP brute-force protection (Redis + In-Memory Fallback) ────────────────────
 const OTP_TTL_MINUTES = parseInt(process.env.OTP_TTL_MINUTES || '15', 10);
@@ -55,82 +74,6 @@ const OTP_LOCKOUT_MINUTES = parseInt(process.env.OTP_LOCKOUT_MINUTES || '30', 10
 const IN_MEMORY_OTP_MAP_MAX_SIZE = parseInt(process.env.IN_MEMORY_OTP_MAP_MAX_SIZE || '10000', 10);
 const DELIVERY_OTP_READY_STATUSES = new Set(['arriving']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const inMemoryOtpFailedAttempts = new Map();
-
-function isOtpExpired(otpGeneratedAt) {
-  if (!otpGeneratedAt) return true;
-  const elapsed = Date.now() - new Date(otpGeneratedAt).getTime();
-  return elapsed > OTP_TTL_MINUTES * 60 * 1000;
-}
-
-async function checkOtpLockout(orderId) {
-  if (redisClient) {
-    try {
-      const lockKey = `otp_lockout:${orderId}`;
-      const isLocked = await redisClient.get(lockKey);
-      return !!isLocked;
-    } catch (err) {
-      logger.error('[OTP] Redis error in checkOtpLockout, falling back to memory:', err.message);
-    }
-  }
-  const record = inMemoryOtpFailedAttempts.get(orderId);
-  if (!record || !record.lockedUntil) return false;
-  if (Date.now() >= record.lockedUntil) {
-    inMemoryOtpFailedAttempts.delete(orderId);
-    return false;
-  }
-  return true;
-}
-
-async function recordOtpFailure(orderId) {
-  if (redisClient) {
-    try {
-      const countKey = `otp_failed_count:${orderId}`;
-      const lockKey = `otp_lockout:${orderId}`;
-      
-      const count = await redisClient.incr(countKey);
-      if (count === 1) await redisClient.expire(countKey, OTP_LOCKOUT_MINUTES * 60);
-      if (count >= OTP_MAX_FAILED_ATTEMPTS) {
-        await redisClient.set(lockKey, '1', 'EX', OTP_LOCKOUT_MINUTES * 60);
-      }
-      return count;
-    } catch (err) {
-      logger.error('[OTP] Redis error in recordOtpFailure, falling back to memory:', err.message);
-    }
-  }
-  
-  if (inMemoryOtpFailedAttempts.size >= IN_MEMORY_OTP_MAP_MAX_SIZE) {
-    const oldestKey = inMemoryOtpFailedAttempts.keys().next().value;
-    inMemoryOtpFailedAttempts.delete(oldestKey);
-  }
-
-  let record = inMemoryOtpFailedAttempts.get(orderId);
-  if (!record) {
-    record = { count: 0, lockedUntil: null };
-    inMemoryOtpFailedAttempts.set(orderId, record);
-  }
-  record.count += 1;
-  if (record.count >= OTP_MAX_FAILED_ATTEMPTS) {
-    record.lockedUntil = Date.now() + OTP_LOCKOUT_MINUTES * 60 * 1000;
-  }
-  return record.count;
-}
-
-async function clearOtpState(orderId) {
-  if (redisClient) {
-    try {
-      const countKey = `otp_failed_count:${orderId}`;
-      const lockKey = `otp_lockout:${orderId}`;
-      await redisClient.del(countKey, lockKey);
-      return;
-    } catch (err) {
-      logger.error('[OTP] Redis error in clearOtpState, falling back to memory:', err.message);
-    }
-  }
-  inMemoryOtpFailedAttempts.delete(orderId);
-}
-
 
 // Rate limiter for the verify-delivery endpoint
 const verifyDeliveryLimiter = rateLimit({
@@ -185,7 +128,6 @@ const telemetryLimiter = rateLimit({
 const resendOtpLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: process.env.NODE_ENV === 'test' ? 1000 : 5,
-  keyGenerator: (req) => req.user?.id || 'unauthenticated',
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.user?.id || 'unknown',
@@ -197,7 +139,6 @@ const resendOtpLimiter = rateLimit({
 const changeDropLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: process.env.NODE_ENV === 'test' ? 1000 : 5,
-  keyGenerator: (req) => req.user?.id || 'unauthenticated',
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => req.user?.id || 'unknown',
@@ -655,7 +596,7 @@ router.post('/:id/ratings', authenticate, userLimiter, requireRole(['customer'])
       return res.status(409).json({ error: 'A rating has already been submitted for this order.' });
     }
 
-    const { error: rpcErr } = await supabase.rpc('submit_rating_tx', {
+    const { data: ratingData, error: rpcErr } = await supabase.rpc('submit_rating_tx', {
       p_order_display_id: order.order_display_id,
       p_customer_id: req.user.id,
       p_driver_id: order.driver_id,
@@ -689,7 +630,7 @@ router.post('/:id/ratings', authenticate, userLimiter, requireRole(['customer'])
           failed_at: new Date().toISOString(),
           retry_count: 0,
           last_error: repErr.message,
-        }).then().catch(() => {});
+        }).catch((dbErr) => logger.error('[reputation] Failed to log failure:', dbErr.message));
       });
     } else {
       logger.warn(
@@ -840,19 +781,14 @@ router.put('/:id/milestones', authenticate, userLimiter, requireRole(['driver'])
 
     const status = milestoneMap[milestone];
     const updates = { status, updated_at: new Date().toISOString() };
-    let generatedOtp = null;
 
     if (milestone === 'In Transit') {
-      const activeOtp = await getActiveDeliveryOtp(orderId);
-      if (!activeOtp) {
-        generatedOtp = crypto.randomInt(100000, 1000000).toString();
-        const stored = await storeDeliveryOtp(orderId, generatedOtp, OTP_TTL_MINUTES);
-        if (stored) {
-          await clearOtpState(orderId);
-        }
-      } else {
-        logger.warn(`[OTP] Driver ${req.user.id} attempted OTP regeneration for order ${orderId}`);
-      }
+      await orderNotificationService.sendOrderNotification({
+        type: 'delivery_otp_in_transit',
+        orderId,
+        orderDisplayId: order.order_display_id,
+        customerId: order.customer_id,
+      });
     }
 
     const { error: timelineErr } = await supabase.from('order_timeline').update({ completed: true, milestone_time: new Date().toISOString() }).eq('order_display_id', order.order_display_id).eq('milestone', milestone);
@@ -867,17 +803,6 @@ router.put('/:id/milestones', authenticate, userLimiter, requireRole(['driver'])
         .eq('order_display_id', order.order_display_id)
         .eq('milestone', milestone);
       return res.status(500).json({ error: 'Failed to update order.', details: updateErr.message });
-    }
-
-    if (generatedOtp) {
-      const notifResult = await sendDeliveryOtpNotification(order.customer_id, order.order_display_id, generatedOtp);
-      if (!notifResult.success) {
-        logger.warn(`[OrderRoutes] Delivery OTP notification failed for order ${order.order_display_id} — FCM error: ${notifResult.fcm?.error || 'unknown'}`);
-        await supabase.from('orders').update({
-          notification_failed: true,
-          updated_at: new Date().toISOString(),
-        }).eq('id', orderId);
-      }
     }
 
     const response = { message: 'Milestone updated successfully.', order: updatedOrder, milestone, status };
@@ -1074,17 +999,14 @@ router.post('/:id/resend-otp', authenticate, userLimiter, resendOtpLimiter, requ
       return res.status(409).json({ error: 'Delivery OTP can only be sent after the shipment reaches the delivery location.' });
     }
 
-    const otp = crypto.randomInt(100000, 1000000).toString();
-    const stored = await storeDeliveryOtp(orderId, otp, OTP_TTL_MINUTES);
-    if (!stored) {
+    const result = await orderNotificationService.sendOrderNotification({
+      type: 'delivery_otp_resend',
+      orderId,
+      orderDisplayId: order.order_display_id,
+      customerId: order.customer_id,
+    });
+    if (!result.otp) {
       return res.status(500).json({ error: 'Failed to generate delivery OTP.' });
-    }
-
-    await clearOtpState(orderId);
-
-    const notifResult = await sendDeliveryOtpNotification(order.customer_id, order.order_display_id, otp);
-    if (!notifResult.success) {
-      logger.warn(`[OrderRoutes] Resend OTP notification failed for order ${order.order_display_id} — FCM error: ${notifResult.fcm?.error || 'unknown'}`);
     }
 
     res.json({ message: 'New delivery OTP sent.', expiresInMinutes: OTP_TTL_MINUTES });
