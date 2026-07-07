@@ -11,6 +11,21 @@ import { computeOrderPricing } from '../lib/pricing.js';
 import { predictPrice } from '../services/ml.js';
 import logger from '../middleware/logger.js';
 
+function sanitizeNumberPlate(plate) {
+  if (!plate || typeof plate !== 'string') return '';
+  return plate.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function sanitizeTruckName(name) {
+  if (!name || typeof name !== 'string') return '';
+  return name.trim().slice(0, 100).replace(/<[^>]*>/g, '');
+}
+
+function validateCapacity(capacity) {
+  const num = Number(capacity);
+  return Number.isFinite(num) && num > 0 && num <= 100 ? num : null;
+}
+
 const router = express.Router();
 
 // ============================================================================
