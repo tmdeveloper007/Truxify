@@ -108,6 +108,9 @@ export async function reconcilePendingEscrowRefunds() {
 
         const receipt = await confirmEscrowRefund(refundTxHash);
         const refundedAt = new Date().toISOString();
+        const { data: cur } = await supabase.from('orders').select('status').eq('id', order.id).maybeSingle();
+        if (cur && (cur.status === 'delivered' || cur.status === 'payment_released')) { logger.info('[escrow] Order already delivered - skip refund'); continue; }
+
         const { error: updateError } = await supabase
           .from('orders')
           .update({

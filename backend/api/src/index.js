@@ -24,6 +24,7 @@ import truckRoutes from './routes/truckRoutes.js'
 import authRoutes from './routes/authRoutes.js'
 import healthRoutes from './routes/healthRoutes.js'
 import adminRoutes from './routes/adminRoutes.js'
+import lookupRoutes from './routes/lookupRoutes.js'
 
 import logger from './middleware/logger.js'
 import { setupSwagger } from './config/swagger.js'
@@ -56,6 +57,10 @@ if (process.env.BYPASS_AUTH === 'true' && process.env.NODE_ENV !== 'development'
 if (process.env.NODE_ENV === 'production' && !process.env.ML_API_KEY) {
   logger.fatal('ML_API_KEY is not set. ML engine calls will fail with 401 errors. Set ML_API_KEY and restart.')
   process.exit(1)
+}
+if (process.env.NODE_ENV === 'production' && (!process.env.POLYGON_RPC_URL || !process.env.ESCROW_CONTRACT_ADDRESS || !process.env.RELAYER_WALLET_PRIVATE_KEY)) {
+  logger.fatal('Escrow environment variables (POLYGON_RPC_URL, ESCROW_CONTRACT_ADDRESS, RELAYER_WALLET_PRIVATE_KEY) are not set. These are required in production for on-chain escrow protection. Set all three and restart.');
+  process.exit(1);
 }
 if (!process.env.DRIVER_LOGIN_OTP) {
   logger.warn('DRIVER_LOGIN_OTP is not set. Driver OTP login will be disabled until it is configured in production.')
@@ -136,25 +141,26 @@ app.use(requestLogger)
 // ============================================================================
 // RATE LIMITING
 // ============================================================================
-app.use('/api/', globalLimiter)
 app.use('/api/health', healthLimiter)
+app.use('/api/health', healthRoutes)
+app.use('/api/', globalLimiter)
 app.use('/api/v1/trips', tripRoutes)
 
 // ============================================================================
 // REST API ROUTING
 // ============================================================================
-app.use('/api/health', healthRoutes)
 
-app.use('/api/orders', orderRoutes)
-app.use('/api/driver', driverRoutes)
-app.use('/api/loads', loadRoutes)
-app.use('/api/support', supportRoutes)
-app.use('/api/profile', profileRoutes)
-app.use('/api/devices', deviceRoutes)
-app.use('/api/driver/documents', documentRoutes)
-app.use('/api/trucks', truckRoutes)
-app.use('/api/auth', authLimiter, authRoutes)
-app.use('/api/v1/admin', adminRoutes)
+  app.use('/api/orders', orderRoutes)
+  app.use('/api/driver', driverRoutes)
+  app.use('/api/loads', loadRoutes)
+  app.use('/api/support', supportRoutes)
+  app.use('/api/profile', profileRoutes)
+  app.use('/api/devices', deviceRoutes)
+  app.use('/api/driver/documents', documentRoutes)
+  app.use('/api/trucks', truckRoutes)
+  app.use('/api/v1', lookupRoutes)
+  app.use('/api/auth', authLimiter, authRoutes)
+  app.use('/api/v1/admin', adminRoutes)
 
 // Setup Swagger Documentation
 setupSwagger(app)
