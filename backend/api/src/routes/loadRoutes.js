@@ -130,7 +130,11 @@ router.get('/', authenticate, userLimiter, requireRole(['driver']), async (req, 
       if (typeof req.query.goods_type !== 'string') {
         return res.status(400).json({ error: 'goods_type must be a single string' });
       }
-      query = query.eq('goods_type', req.query.goods_type);
+      const goodsType = req.query.goods_type.trim();
+      if (!goodsType) {
+        return res.status(400).json({ error: 'goods_type must not be empty' });
+      }
+      query = query.eq('goods_type', goodsType);
     }
     if (filters.min_price !== undefined) {
       // Map min_price (in Rupees) to freight_value (in paisa)
