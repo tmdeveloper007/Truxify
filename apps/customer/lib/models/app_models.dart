@@ -204,6 +204,50 @@ class HistoryOrderData {
   final String? platformFee;
 }
 
+class HistoryOrderData {
+  const HistoryOrderData({
+    required this.orderId,
+    required this.route,
+    required this.date,
+    required this.amount,
+    required this.status,
+    required this.driver,
+    required this.truckNumber,
+    required this.timeline,
+    this.blockchainTxHash,
+    this.baseFare,
+    this.distanceCharge,
+    this.tollCharge,
+    this.platformFee,
+    this.goodsType,
+    this.weightTonnes,
+    this.dimensions,
+    this.isStackable,
+    this.isFragile,
+    this.specialRequirements,
+  });
+
+  final String orderId;
+  final String route;
+  final String date;
+  final String amount;
+  final String status;
+  final String driver;
+  final String truckNumber;
+  final List<TimelineStepData> timeline;
+  final String? blockchainTxHash;
+  final String? baseFare;
+  final String? distanceCharge;
+  final String? tollCharge;
+  final String? platformFee;
+  final String? goodsType;
+  final String? weightTonnes;
+  final String? dimensions;
+  final bool? isStackable;
+  final bool? isFragile;
+  final String? specialRequirements;
+}
+
 class TimelineStepData {
   const TimelineStepData({
     required this.title,
