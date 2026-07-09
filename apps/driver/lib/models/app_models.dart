@@ -284,8 +284,8 @@ class TripItem {
     required this.destination,
     required this.earnings,
     required this.delivered,
-    required this.isFragile,
-    required this.isStackable,
+    required this.isFragile = false,
+    required this.isStackable = true,
     this.specialRequirements,
   });
 
