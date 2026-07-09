@@ -32,6 +32,7 @@ import lookupRoutes from './routes/lookupRoutes.js'
 import logger from './middleware/logger.js'
 import { setupSwagger } from './config/swagger.js'
 import { requestIdMiddleware, requestLogger } from './middleware/requestId.js'
+import { requireJsonContent } from './middleware/contentType.js'
 import { initSentry, flushSentry, sentryErrorHandler } from './middleware/sentry.js'
 import {
   startEscrowRefundReconciliation,
@@ -144,6 +145,11 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }))
 // ============================================================================
 app.use(requestIdMiddleware)
 app.use(requestLogger)
+
+// Enforce a known request content-type on mutating requests (POST/PUT/PATCH).
+// `requireJsonContent` only rejects unrecognized media types; the three
+// allowed types match the parsers registered above.
+app.use(requireJsonContent)
 
 // ============================================================================
 // RATE LIMITING

@@ -12,13 +12,14 @@ export function requireJsonContent(req, res, next) {
     // `text/plain; application/json` or `application/jsonx` through.
     const mimeType = contentType.split(';')[0].trim().toLowerCase();
 
-    // Allow application/json
-    if (mimeType === 'application/json') {
-      return next();
-    }
-
-    // Allow multipart/form-data for specific routes (like document uploads)
-    if (mimeType === 'multipart/form-data') {
+    // Allow the media types the API actually parses (express.json,
+    // express.urlencoded, multer for uploads). Anything else is rejected.
+    const allowed = [
+      'application/json',
+      'application/x-www-form-urlencoded',
+      'multipart/form-data',
+    ];
+    if (allowed.includes(mimeType)) {
       return next();
     }
 
