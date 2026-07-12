@@ -1,5 +1,7 @@
 import express from 'express';
 import { supabase } from '../config/db.js';
+import { authenticate, requireRole } from '../middleware/auth.js';
+import { userLimiter, adminRateLimiter } from '../middleware/rateLimiter.js';
 import { authenticate } from '../middleware/auth.js';
 import { requirePolicy } from '../middleware/requirePolicy.js';
 import { userLimiter } from '../middleware/rateLimiter.js';
@@ -381,6 +383,7 @@ router.patch('/tickets/:id', authenticate, userLimiter, validateBody(updateTicke
 // ============================================================================
 // 7. LIST ALL TICKETS (ADMIN ONLY)
 // ============================================================================
+router.get('/admin/tickets', authenticate, adminRateLimiter, requireRole(['admin']), async (req, res) => {
 router.get('/admin/tickets', authenticate, userLimiter, requirePolicy('ticket:admin-view-all'), async (req, res) => {
   const { status, category, user_id, page = '1', limit = '20' } = req.query;
   const parsedPage = parsePositiveInteger(page, 1, 'page');
