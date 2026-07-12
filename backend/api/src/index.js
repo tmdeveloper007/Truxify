@@ -34,6 +34,12 @@ import lookupRoutes from './routes/lookupRoutes.js'
 import verificationRoutes from './routes/verificationRoutes.js'
 import oracleRoutes from './routes/oracleRoutes.js'
 
+// ============================================================================
+// 🆕 GEOGRAPHIC SHARDING ROUTES
+// ============================================================================
+import shardRoutes from './routes/shardRoutes.js'
+import shardManager from './services/sharding/ShardManager.js'
+
 import logger from './middleware/logger.js'
 import { setupSwagger } from './config/swagger.js'
 import { correlationIdMiddleware } from './middleware/correlationId.js'
@@ -89,6 +95,14 @@ if (!process.env.ORACLE_CONSENSUS_THRESHOLD) {
 }
 if (!process.env.CHAINLINK_ENABLED && !process.env.BACKUP_ORACLE_ENABLED) {
   logger.warn('No oracle providers enabled. Set CHAINLINK_ENABLED=true or BACKUP_ORACLE_ENABLED=true')
+}
+
+// ============================================================================
+// 🆕 SHARDING VALIDATION
+// ============================================================================
+if (!process.env.SHARD_NORTH_HOST || !process.env.SHARD_SOUTH_HOST || 
+    !process.env.SHARD_EAST_HOST || !process.env.SHARD_WEST_HOST) {
+  logger.warn('⚠️ Shard hosts not fully configured. Using localhost defaults.')
 }
 
 // Validate escrow contract deployment — log warning if validation fails,
@@ -240,6 +254,28 @@ app.get('/api/oracle/health', (req, res) => {
   })
 })
 
+// ============================================================================
+// 🆕 GEOGRAPHIC SHARDING ROUTES
+// ============================================================================
+app.use('/api', shardRoutes)
+
+// 🆕 Shard Health Check Endpoint
+app.get('/api/shard/health', async (req, res) => {
+  try {
+    const status = await shardManager.healthCheck();
+    res.json({
+      status: 'healthy',
+      shards: status,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'unhealthy',
+      error: error.message
+    });
+  }
+})
+
 // Setup Swagger Documentation
 setupSwagger(app)
 
@@ -288,6 +324,7 @@ server.listen(PORT, () => {
   logger.info(`Truxify API listening on port ${PORT}`)
   logger.info(`🆕 Oracle Service enabled with threshold: ${process.env.ORACLE_CONSENSUS_THRESHOLD || 2}`)
   logger.info(`🆕 Verification endpoints available at /api/verify and /api/oracle`)
+  logger.info(`🆕 Geographic Sharding enabled with 4 shards (North, South, East, West)`)
   startEscrowRefundReconciliation(orderRepository)
   startEscrowReleaseReconciliation()
   startReputationReconciliation()
@@ -337,7 +374,11 @@ async function shutdown (signal) {
     await closeLocationServer()
     logger.info('[shutdown] WebSocket resources closed.')
 
-    // 3. Close database/cache connections
+    // 3. Close shard connections
+    await shardManager.closeAllConnections()
+    logger.info('[shutdown] Shard connections closed.')
+
+    // 4. Close database/cache connections
     await closeDbConnections()
 
     logger.info('[shutdown] Clean exit.')
