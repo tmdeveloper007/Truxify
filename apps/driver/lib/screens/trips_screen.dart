@@ -11,6 +11,7 @@ import '../models/app_models.dart';
 import '../models/marketplace_models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import '../services/bid_submission_guard.dart';
 import '../services/marketplace_repository.dart';
 import '../services/trip_cache.dart';
 import '../services/trip_service.dart';
@@ -31,6 +32,7 @@ class _TripsScreenState extends State<TripsScreen> {
 
   RealtimeChannel? _bidChannel;
   final MarketplaceRepository _marketplaceRepository = MarketplaceRepository();
+  final BidSubmissionGuard _bidSubmissionGuard = BidSubmissionGuard();
   late final TripService _tripService;
 
   List<Map<String, dynamic>> _trips = [];
@@ -52,7 +54,7 @@ class _TripsScreenState extends State<TripsScreen> {
   List<LoadOffer> _marketplaceLoads = const [];
   List<LoadOffer> _enRouteLoads = const [];
   Map<String, DriverBid> _bidsByLoadId = const {};
-
+  Set<String> _submittingLoadIds = const <String>{};
 
   final List<String> _statusFilters = [
     'All',
@@ -633,6 +635,7 @@ class _TripsScreenState extends State<TripsScreen> {
                     standardLoads: _marketplaceLoads,
                     enRouteLoads: _enRouteLoads,
                     bidsByLoadId: _bidsByLoadId,
+                    submittingLoadIds: _submittingLoadIds,
                     onOpenLoad: (load) => Navigator.of(context)
                         .pushNamed(AppRoutes.loadDetail, arguments: load),
                     onSubmitBid: (load, amount) async {
@@ -644,11 +647,23 @@ class _TripsScreenState extends State<TripsScreen> {
                         );
                         return;
                       }
+                      if (_submittingLoadIds.contains(loadId)) {
+                        return;
+                      }
+
+                      if (!mounted) return;
+                      setState(() {
+                        _submittingLoadIds = <String>{..._submittingLoadIds, loadId};
+                      });
+
                       try {
-                        final bid = await _marketplaceRepository.submitBid(
+                        final bid = await _bidSubmissionGuard.run<DriverBid>(
                           loadId: loadId,
-                          driverId: DriverSession.driverId,
-                          amount: amount,
+                          action: () async => _marketplaceRepository.submitBid(
+                            loadId: loadId,
+                            driverId: DriverSession.driverId,
+                            amount: amount,
+                          ),
                         );
                         if (!context.mounted) return;
                         setState(() {
@@ -666,6 +681,13 @@ class _TripsScreenState extends State<TripsScreen> {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('Failed to submit bid: $e')),
                         );
+                      } finally {
+                        if (!mounted) return;
+                        setState(() {
+                          _submittingLoadIds = <String>{
+                            ..._submittingLoadIds.where((id) => id != loadId),
+                          };
+                        });
                       }
                     },
                   ),
@@ -1247,6 +1269,7 @@ class _MarketplaceBody extends StatelessWidget {
     required this.standardLoads,
     required this.enRouteLoads,
     required this.bidsByLoadId,
+    required this.submittingLoadIds,
     required this.onOpenLoad,
     required this.onSubmitBid,
   });
@@ -1256,6 +1279,7 @@ class _MarketplaceBody extends StatelessWidget {
   final List<LoadOffer> standardLoads;
   final List<LoadOffer> enRouteLoads;
   final Map<String, DriverBid> bidsByLoadId;
+  final Set<String> submittingLoadIds;
   final ValueChanged<LoadOffer> onOpenLoad;
   final Future<void> Function(LoadOffer load, num amount) onSubmitBid;
 
@@ -1320,6 +1344,7 @@ class _MarketplaceBody extends StatelessWidget {
             (load) => _LoadOfferCard(
               load: load,
               bid: bidsByLoadId[load.id],
+              isSubmitting: submittingLoadIds.contains(load.id),
               onOpen: () => onOpenLoad(load),
               onBid: (amount) => onSubmitBid(load, amount),
             ),
@@ -1336,6 +1361,7 @@ class _MarketplaceBody extends StatelessWidget {
             (load) => _LoadOfferCard(
               load: load,
               bid: bidsByLoadId[load.id],
+              isSubmitting: submittingLoadIds.contains(load.id),
               onOpen: () => onOpenLoad(load),
               onBid: (amount) => onSubmitBid(load, amount),
             ),
@@ -1360,12 +1386,14 @@ class _LoadOfferCard extends StatelessWidget {
   const _LoadOfferCard({
     required this.load,
     required this.bid,
+    required this.isSubmitting,
     required this.onOpen,
     required this.onBid,
   });
 
   final LoadOffer load;
   final DriverBid? bid;
+  final bool isSubmitting;
   final VoidCallback onOpen;
   final Future<void> Function(num amount) onBid;
 
@@ -1450,23 +1478,27 @@ class _LoadOfferCard extends StatelessWidget {
                 ),
               ),
               TextButton(
-                onPressed: () async {
-                  final result = await showModalBottomSheet<num>(
-                    context: context,
-                    isScrollControlled: true,
-                    backgroundColor: TruxifyColors.cardBackground,
-                    shape: const RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.vertical(top: Radius.circular(24)),
-                    ),
-                    builder: (_) =>
-                        _BidBottomSheet(load: load, existingBid: bid),
-                  );
-                  if (result != null) await onBid(result);
-                },
+                onPressed: isSubmitting
+                    ? null
+                    : () async {
+                        final result = await showModalBottomSheet<num>(
+                          context: context,
+                          isScrollControlled: true,
+                          backgroundColor: TruxifyColors.cardBackground,
+                          shape: const RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.vertical(top: Radius.circular(24)),
+                          ),
+                          builder: (_) =>
+                              _BidBottomSheet(load: load, existingBid: bid),
+                        );
+                        if (result != null) await onBid(result);
+                      },
                 style:
                     TextButton.styleFrom(foregroundColor: TruxifyColors.accent),
-                child: Text(bid == null ? 'Bid' : 'Update bid'),
+                child: Text(isSubmitting
+                    ? 'Submitting...'
+                    : (bid == null ? 'Bid' : 'Update bid')),
               ),
             ],
           ),
