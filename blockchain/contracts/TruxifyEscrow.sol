@@ -221,7 +221,7 @@ contract TruxifyEscrow is ReentrancyGuard, Ownable, Pausable {
      *
      * @param bookingId The booking to flag
      */
-    function raiseDispute(uint256 bookingId) external {
+    function raiseDispute(uint256 bookingId) external whenNotPaused {
         Booking storage booking = bookings[bookingId];
 
         require(
