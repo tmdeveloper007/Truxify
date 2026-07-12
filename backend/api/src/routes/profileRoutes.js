@@ -16,9 +16,9 @@ import {
 import { supabase } from '../config/db.js';
 import { ProfileModel } from '../models/ProfileModel.js';
 import { invalidateCachedProfile, invalidateCachedSupabaseProfile } from '../lib/profileCache.js';
-import { startTimer, endTimer } from '../lib/routeTiming.js';
+
 const router = express.Router();
-const routeTimer = startTimer('profileRoutes');
+
 
 // Cache control middleware for profile endpoints
 function profileCacheControl(req, res, next) {
@@ -392,7 +392,6 @@ router.delete('/admin/cache/:userId', authenticate, userLimiter, requirePolicy('
   }
 });
 
-endTimer(routeTimer);
 export default router;
 
 // Resolves #2046: DELETE /admin/cache/:userId endpoint
