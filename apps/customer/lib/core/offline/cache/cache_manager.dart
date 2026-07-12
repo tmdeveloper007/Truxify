@@ -281,7 +281,13 @@ class CacheManager {
     final result = <String, dynamic>{};
 
     for (final row in rows) {
-      result[row['key'] as String] = _safeDecode(row['value'] as String);
+      final key = row['key'] as String;
+      final decoded = _safeDecode(row['value'] as String);
+      if (decoded == null) {
+        await db.delete('settings', where: 'key = ?', whereArgs: [key]);
+        continue;
+      }
+      result[key] = decoded;
     }
 
     return result;
