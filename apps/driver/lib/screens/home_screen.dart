@@ -10,7 +10,6 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' as ll;
-import 'package:truxify_driver/widgets/slide_to_confirm_button.dart';
 
 import '../core/app_routes.dart';
 import '../l10n/app_localizations.dart';
@@ -23,11 +22,14 @@ import '../services/route_service.dart';
 import '../services/trip_service.dart';
 import '../services/location_service.dart';
 import '../theme/app_theme.dart';
-import '../widgets/common_widgets.dart';
-import '../widgets/earnings_shimmer.dart';
 import '../widgets/map_markers.dart';
+import '../widgets/home/offline_banner.dart';
+import '../widgets/home/active_navigation_header.dart';
+import '../widgets/home/search_destination_card.dart';
+import '../widgets/home/new_load_notification_banner.dart';
+import '../widgets/home/driver_status_sheet.dart';
+import '../widgets/home/active_trip_sheet.dart';
 import 'destination_picker_screen.dart';
-import '../widgets/pulsing_location_dot.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -752,10 +754,7 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             // Map
             Positioned.fill(
-              child: _buildMapBody(
-                context,
-                showDestinationChip: _destination != null,
-              ),
+              child: _buildMapBody(context),
             ),
 
             // Top Bar
@@ -788,9 +787,21 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                       ),
+                    if (_isOffline) const OfflineBanner(),
                     _isTripStarted
-                        ? _buildActiveNavigationHeader(context)
-                        : _buildSearchCard(context),
+                        ? ActiveNavigationHeader(
+                            destinationAddress:
+                                _destination?.address ?? 'Destination',
+                          )
+                        : SearchDestinationCard(
+                            currentLocationText: _currentLocationText,
+                            destination: _destination,
+                            isLoadingLocation: _isLoadingLocation,
+                            isRefreshingLocation: _isRefreshingLocation,
+                            locationError: _locationError,
+                            onRefreshLocation: _fetchCurrentLocation,
+                            onOpenDestinationPicker: _openDestinationPicker,
+                          ),
                   ],
                 ),
               ),
@@ -802,13 +813,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 left: 12,
                 right: 12,
                 top: 96,
-                child: GestureDetector(
-                  onTap: () {
+                child: NewLoadNotificationBanner(
+                  load: _latestNewLoad!,
+                  onView: () {},
+                  onDismiss: () {
                     setState(() => _dismissedNewLoad = true);
-                    Navigator.of(context).pushNamed(
-                      AppRoutes.loadDetail,
-                      arguments: _latestNewLoad,
-                    );
                   },
                   child: Container(
                     padding: const EdgeInsets.symmetric(
@@ -911,7 +920,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-            // Recenter FAB — hidden until GPS is ready
+            // Recenter FAB
             if (_currentLocation != null)
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 300),
@@ -949,8 +958,51 @@ class _HomeScreenState extends State<HomeScreen> {
                       });
                     },
                     child: _destination == null
-                        ? _buildBottomSheet(context)
-                        : _buildActiveTripSheet(context),
+                        ? DriverStatusSheet(
+                            isOnline: _isOnline,
+                            isLoadingLocation: _isLoadingLocation,
+                            currentLocationLabel: _currentLocationLabel,
+                            isLoadingMetrics: _isLoadingMetrics,
+                            metricsError: _metricsError,
+                            todayEarnings: _todayEarnings,
+                            driverRating: _driverRating,
+                            onToggleOnline: _toggleOnlineState,
+                          )
+                        : ActiveTripSheet(
+                            isTripStarted: _isTripStarted,
+                            truckLabel: _activeTruckLabel,
+                            currentLocationLabel: _currentLocationLabel,
+                            destinationAddress:
+                                _destination?.address ?? 'Destination',
+                            distance: _activeTripDistance,
+                            duration: _activeTripDuration,
+                            payout: _activeTripPayout,
+                            onStartTrip: () async {
+                              if (_activeTripId == null) {
+                                setState(() => _isTripStarted = true);
+                                return;
+                              }
+                              try {
+                                await _tripService.startTrip(_activeTripId!);
+                                if (mounted) {
+                                  setState(() => _isTripStarted = true);
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                        content:
+                                            Text('Failed to start trip: $e')),
+                                  );
+                                }
+                              }
+                            },
+                            onCompleteTrip: () async {
+                              await _completeRide();
+                            },
+                            onCancel: _clearDestination,
+                            onOpenMaps: _openGoogleMapsRoute,
+                          ),
                   ),
                 ),
               ),
@@ -1054,8 +1106,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return DateTime(year, month, day);
   }
 
-  Widget _buildMapBody(BuildContext context,
-      {required bool showDestinationChip}) {
+  Widget _buildMapBody(BuildContext context) {
     // Show loading spinner while GPS is being fetched
     if (_isLoadingLocation) {
       return Container(
@@ -1745,3 +1796,4 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+

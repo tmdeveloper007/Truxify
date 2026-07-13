@@ -70,13 +70,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     setState(() => _isSaving = true);
 
     try {
-      await ApiClient().put(
-        '/api/profile',
-        body: {
-          'full_name': _nameController.text.trim(),
-          'company_name': _companyController.text.trim(),
-          'phone': _phoneController.text.trim(),
-        },
+      await _profileService.updateProfile(
+        fullName: _nameController.text.trim(),
+        companyName: _companyController.text.trim(),
+        phone: _phoneController.text.trim(),
       );
 
       if (!mounted) return;
