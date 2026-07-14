@@ -128,7 +128,9 @@ class TripService {
     final path = '/api/trips/${_encodePathSegment(tripDisplayId)}/items';
     try {
       final body = await _apiClient.get(path);
-      if (body is! List) return [];
+      if (body is! List) {
+        throw StateError('Unexpected trip items response type');
+      }
       return List<Map<String, dynamic>>.from(body);
     } catch (e) {
       if (e is ApiException) throw StateError(e.message);
@@ -142,7 +144,9 @@ class TripService {
     final path = '/api/trips/${_encodePathSegment(tripDisplayId)}/stops';
     try {
       final body = await _apiClient.get(path);
-      if (body is! List) return [];
+      if (body is! List) {
+        throw StateError('Unexpected trip stops response type');
+      }
       return List<Map<String, dynamic>>.from(body);
     } catch (e) {
       if (e is ApiException) throw StateError(e.message);
@@ -156,7 +160,9 @@ class TripService {
     final path = '/api/trips/${_encodePathSegment(tripDisplayId)}/route-points';
     try {
       final body = await _apiClient.get(path);
-      if (body is! List) return [];
+      if (body is! List) {
+        throw StateError('Unexpected route points response type');
+      }
       return List<Map<String, dynamic>>.from(body);
     } catch (e) {
       if (e is ApiException) throw StateError(e.message);

@@ -38,6 +38,33 @@ export async function acquireLock(resourceKey, ttlMs = 10000) {
 }
 
 /**
+ * Renews a distributed lock by extending its TTL if still held by this lockValue.
+ * @param {string} resourceKey - The unique key identifying the resource
+ * @param {string} lockValue - The value returned by acquireLock
+ * @param {number} ttlMs - New TTL in milliseconds
+ * @returns {Promise<boolean>} true if renewed, false otherwise
+ */
+export async function renewLock(resourceKey, lockValue, ttlMs = 10000) {
+  if (!redisClient || !lockValue) return false;
+
+  const luaScript = `
+    if redis.call('GET', KEYS[1]) == ARGV[1] then
+      redis.call('PEXPIRE', KEYS[1], ARGV[2])
+      return 1
+    end
+    return 0
+  `;
+
+  try {
+    const result = await redisClient.eval(luaScript, 1, resourceKey, lockValue, ttlMs.toString());
+    return result === 1;
+  } catch (err) {
+    logger.error({ err }, '[RedisLock] Error renewing lock for key', resourceKey);
+    return false;
+  }
+}
+
+/**
  * Releases a distributed lock using a Lua script to ensure atomicity.
  * @param {string} resourceKey - The unique key identifying the resource
  * @param {string} lockValue - The value returned by acquireLock

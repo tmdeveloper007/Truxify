@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import logger from '../../middleware/logger.js';
+import { supabase } from '../../config/db.js';
 import {
   sendDeliveryOtpNotification,
   storeDeliveryOtp,

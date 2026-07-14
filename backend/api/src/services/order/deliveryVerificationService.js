@@ -250,6 +250,7 @@ export class DeliveryVerificationService {
       throw new DomainError(500, { error: 'Failed to verify OTP.', details: guardResult.error.message });
     }
 
+
     let releaseTxHash = null;
     let escrowAlreadyReleased = false;
     if (order.escrow_status === 'funded' || order.escrow_status === 'release_failed') {

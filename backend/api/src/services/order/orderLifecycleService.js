@@ -1,11 +1,6 @@
 import crypto from 'crypto';
 import { DomainError } from './bidAcceptanceService.js';
-import {
-  verifyDelivery,
-  generateDeliveryOtp,
-  resendDeliveryOtp,
-  sendOtpNotification,
-} from './deliveryVerificationService.js';
+import { DeliveryVerificationService } from './deliveryVerificationService.js';
 import { expireDeliveryOtps } from '../notificationService.js';
 import { acquireLock, releaseLock } from '../../lib/redisLock.js';
 import { measureExecution } from '../../core/performanceMetrics.js';
@@ -36,6 +31,7 @@ export class OrderLifecycleService {
     this.orderRepository = orderRepository;
     this.orderTimelineService = orderTimelineService;
     this.bidAcceptanceService = bidAcceptanceService;
+    this.deliveryVerification = new DeliveryVerificationService(orderRepository);
   }
 
   async createOrder(customerId, customerName, body) {
@@ -82,10 +78,7 @@ export class OrderLifecycleService {
         routeOrigin: pickup_address,
         routeDestination: drop_address,
       });
-      if (!mlResult || typeof mlResult.estimated_price !== 'number' || mlResult.estimated_price <= 0) {
-        throw new Error(`Invalid or non-positive price prediction: ${JSON.stringify(mlResult)}`);
-      }
-      estimatedPrice = Math.round(mlResult.estimated_price * 100);
+      estimatedPrice = mlResult.estimatedPricePaisa;
     } catch (mlErr) {
       logger.warn({ err: mlErr.message }, 'Price prediction unavailable, falling back to base pricing');
     }
@@ -359,7 +352,7 @@ export class OrderLifecycleService {
     return measureExecution('OrderLifecycleService.updateMilestone', async () => {
     const milestoneMap = {
       'Arrived at Pickup': 'at_pickup',
-      'Goods Loaded': 'in_transit',
+      'Goods Loaded': 'picked_up',
       'In Transit': 'in_transit',
       'Arriving': 'arriving',
       'Arrived at Drop-off': 'at_dropoff',
@@ -396,7 +389,7 @@ export class OrderLifecycleService {
     let generatedOtp = null;
 
     if (milestone === 'In Transit') {
-      const result = await generateDeliveryOtp({ orderId });
+      const result = await this.deliveryVerification.generateDeliveryOtp({ orderId });
       generatedOtp = result.otp;
     }
 
@@ -410,7 +403,7 @@ export class OrderLifecycleService {
     }
 
     if (generatedOtp) {
-      await sendOtpNotification({
+      await this.deliveryVerification.sendOtpNotification({
         orderId,
         customerId: order.customer_id,
         orderDisplayId: order.order_display_id,
@@ -424,7 +417,7 @@ export class OrderLifecycleService {
 
   async verifyDeliveryFn(orderId, driverId, otp) {
     return measureExecution('OrderLifecycleService.verifyDeliveryFn', () =>
-      verifyDelivery({ orderId, driverId, otp })
+      this.deliveryVerification.verifyDelivery({ orderId, driverId, otp })
     );
   }
 
@@ -434,7 +427,7 @@ export class OrderLifecycleService {
     if (orderErr || !order) throw new DomainError(404, { error: 'Order not found.' });
     if (order.driver_id !== driverId) throw new DomainError(403, { error: 'Access Denied: You are not assigned to this order.' });
 
-    const { expiresInMinutes } = await resendDeliveryOtp({
+    const { expiresInMinutes } = await this.deliveryVerification.resendDeliveryOtp({
       orderId,
       customerId: order.customer_id,
       orderDisplayId: order.order_display_id,

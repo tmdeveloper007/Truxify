@@ -5,11 +5,10 @@ import 'dart:developer' as developer;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'dart:io';
-import 'package:http/io_client.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../config/app_config.dart';
+import 'http_client_factory.dart';
 
 /// Exception thrown when an API request fails after token refresh.
 class ApiAuthException implements Exception {
@@ -44,16 +43,6 @@ class ApiException implements Exception {
 /// final data = await client.get('/api/orders');
 /// ```
 class ApiClient {
-  static http.Client _createPinnedClient() {
-    if (kIsWeb) return http.Client();
-    final securityContext = SecurityContext(withTrustedRoots: true);
-    final ioClient = HttpClient(context: securityContext)
-      ..badCertificateCallback = (X509Certificate cert, String host, int port) {
-        return false;
-      };
-    return IOClient(ioClient);
-  }
-
   ApiClient({
     SupabaseClient? supabaseClient,
     http.Client? httpClient,
@@ -61,7 +50,7 @@ class ApiClient {
     Duration? timeout,
   })  : _providedSupabase = supabaseClient,
         _isClientOwned = httpClient == null,
-        _http = httpClient ?? _createPinnedClient(),
+        _http = httpClient ?? createHttpClient(),
         _baseUrl = _normalise(_getBaseUrl(baseUrl)),
         _timeout = timeout ?? AppConfig.apiTimeout;
 
