@@ -187,10 +187,14 @@ class DriverEarningsService {
     try {
       final decoded = await _apiClient.get(path);
       
-      if (decoded is! List) return null;
+      if (decoded is! List) {
+        throw StateError('Unexpected earnings summary response type');
+      }
 
       for (final entry in decoded) {
-        if (entry is! Map) continue;
+        if (entry is! Map) {
+          throw StateError('Unexpected earnings summary item type');
+        }
         final dateStr = entry['day_date']?.toString();
         if (dateStr == dayStr) {
           return EarningsDailyModel.fromMap(Map<String, dynamic>.from(entry));
@@ -199,6 +203,9 @@ class DriverEarningsService {
 
       return null;
     } catch (e) {
+      if (e is StateError) {
+        throw Exception(e.message);
+      }
       if (e is ApiException) {
         throw Exception(e.message.isNotEmpty ? e.message : 'Failed to load today\'s earnings.');
       }
