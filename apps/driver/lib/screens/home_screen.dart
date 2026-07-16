@@ -131,8 +131,6 @@ class _HomeScreenState extends State<HomeScreen> {
   String _activeTripPayout = '';
   bool _isLoadingLocation = true;
   String? _locationError;
-  final List<TripRecord> tripHistory = [];
-
   late final MarketplaceRepository _marketplaceRepo;
   StreamSubscription<LoadOffer>? _loadSubscription;
   Timer? _autoHideTimer;

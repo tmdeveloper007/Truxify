@@ -1,0 +1,43 @@
+## Description
+
+In `backend/api/src/services/order/orderTimelineService.js`, the constructor only assigns `this.orderRepository` but never initializes `this.logger`:
+
+```javascript
+constructor(orderRepository) {
+  this.orderRepository = orderRepository;
+}
+```
+
+However, multiple methods use `this.logger?.error?.()` to log failures:
+- Line 55: `this.logger?.error?.('Timeline Reset Error:', error.message);`
+- Line 72: `this.logger?.error?.('Failed to update timeline for change-drop:', error.message);`
+- Line 83: `this.logger?.error?.('Failed to update Order Placed milestone on cancel:', error.message);`
+- Line 92: `this.logger?.error?.('Failed to delete order timeline:', error.message);`
+
+The optional chaining prevents a crash, but **all error messages are silently swallowed** in production. When timeline operations fail (reset, cancel, delete), developers have no way to debug the issue.
+
+## Impact
+
+**Medium** - Silent error swallowing makes production debugging extremely difficult.
+
+## Suggested Fix
+
+Update the constructor to accept and store a logger:
+
+```javascript
+constructor(orderRepository, logger) {
+  this.orderRepository = orderRepository;
+  this.logger = logger;
+}
+```
+
+Or accept a dependencies object:
+
+```javascript
+constructor({ orderRepository, logger }) {
+  this.orderRepository = orderRepository;
+  this.logger = logger;
+}
+```
+
+GSSoC

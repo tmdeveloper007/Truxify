@@ -1,0 +1,36 @@
+## Description
+
+In `backend/api/src/services/order/orderLifecycleService.js` at lines 3-8, the module imports `sendOtpNotification` from `./deliveryVerificationService.js`:
+
+```javascript
+import {
+  verifyDelivery,
+  generateDeliveryOtp,
+  resendDeliveryOtp,
+  sendOtpNotification,
+} from './deliveryVerificationService.js';
+```
+
+However, `deliveryVerificationService.js` **does not export** any standalone function named `sendOtpNotification`. It only exports the class `DeliveryVerificationService`, which has an *instance method* called `sendOtpNotification` (line 215). The file does not have any top-level `export function sendOtpNotification` statement.
+
+When `orderLifecycleService.js` calls `await sendOtpNotification({...})` at line 413, it will throw a **TypeError: sendOtpNotification is not a function**.
+
+Similarly, `verifyDelivery`, `generateDeliveryOtp`, and `resendDeliveryOtp` are also imported but not exported as standalone functions.
+
+## Impact
+
+**Critical** - The `updateMilestone` method in `OrderLifecycleService` crashes whenever the "In Transit" milestone is triggered, breaking the core order fulfillment flow.
+
+## Steps to Reproduce
+
+1. Start the server
+2. Update an order's milestone to "In Transit"
+3. Observe TypeError crash
+
+## Suggested Fix
+
+Option A: Add standalone exported wrappers in `deliveryVerificationService.js`
+Option B: Change `orderLifecycleService.js` to import from `../notificationService.js` (where `sendDeliveryOtpNotification` actually lives)
+Option C: Call these as methods on a `DeliveryVerificationService` instance
+
+GSSoC

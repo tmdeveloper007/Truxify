@@ -1,4 +1,4 @@
-const OracleService = require('../oracle/OracleService');
+import OracleService from '../oracle/OracleService.js';
 
 class VerificationService {
   constructor() {
@@ -68,4 +68,4 @@ class VerificationService {
   }
 }
 
-module.exports = VerificationService;
+export default VerificationService;

@@ -1,0 +1,33 @@
+## Description
+
+In `backend/api/src/routes/orderRoutes.js` at lines 379-383 and 400-404, there are duplicate `const { data: offers, error }` destructuring declarations in the same scope.
+
+**GET /load-offers handler (lines 379-383):**
+```javascript
+const { data: offers, error } = await orderRepository.findLoadOffers({ is_en_route: false });
+const { data: offers, error } = await orderRepository.findLoadOffers(
+  { is_en_route: false },
+  { pagination: { page, limit } }
+);
+```
+
+**GET /load-offers/en-route handler (lines 400-404):**
+```javascript
+const { data: offers, error } = await orderRepository.findLoadOffers({ is_en_route: true });
+const { data: offers, error } = await orderRepository.findLoadOffers(
+  { is_en_route: true },
+  { pagination: { page, limit } }
+);
+```
+
+`const` does not allow redeclaration in the same block scope. This will cause a **SyntaxError** at load time, crashing the entire server on startup.
+
+## Impact
+
+**Critical** - The server fails to start, making all order routes unavailable.
+
+## Suggested Fix
+
+Remove the old non-paginated calls (lines 379 and 400) since the paginated versions on the following lines are the correct replacements.
+
+GSSoC

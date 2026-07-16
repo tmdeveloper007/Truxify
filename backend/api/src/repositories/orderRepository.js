@@ -1,3 +1,4 @@
+import { getRequestCache } from '../lib/requestContext.js';
 import { executeWithRetry, isRetryable } from '../core/retry.js';
 import { measureExecution } from '../core/performanceMetrics.js';
 import { buildPagination } from '../utils/pagination.js';
@@ -70,7 +71,7 @@ export class OrderRepository {
       .eq('order_display_id', displayId)
       .maybeSingle(), 'findOrderByDisplayId');
   }
-
+  
   async findOrderByAnyId(id, columns = '*') {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (uuidRegex.test(id)) {
@@ -114,14 +115,21 @@ export class OrderRepository {
       .select('customer_id, driver_id, order_display_id')
       .eq('id', id)
       .maybeSingle(), 'findOrderForTimeline');
-  }
-
-  async findOrderByDisplayForTimeline(displayId) {
+  } 
+  async findOrderById(id, columns = '*') {
     return this._retryableQuery(() => this.supabase
       .from('orders')
-      .select('customer_id, driver_id, order_display_id')
+      .select(columns)
+      .eq('id', id)
+      .maybeSingle(), 'findOrderById');
+  }
+
+  async findOrderByDisplayId(displayId, columns = '*') {
+    return this._retryableQuery(() => this.supabase
+      .from('orders')
+      .select(columns)
       .eq('order_display_id', displayId)
-      .maybeSingle(), 'findOrderByDisplayForTimeline');
+      .maybeSingle(), 'findOrderByDisplayId');
   }
 
   async updateOrder(id, updates) {
@@ -554,4 +562,3 @@ export class OrderRepository {
   }
 }
 
-}

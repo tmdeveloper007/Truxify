@@ -7,7 +7,10 @@ class FraudDetectionService {
     this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
     this.behavioralProfiles = new Map();
     this.fraudThreshold = parseFloat(process.env.FRAUD_THRESHOLD) || 0.7;
-    this.riskScores = {};
+    this.riskScores = new Map();
+    this._maxRiskScores = 10000;
+    this._maxBehavioralProfiles = 5000;
+    this._cleanupInterval = setInterval(() => this._evictStale(), 300_000); // every 5 min
     
     // Initialize ML models (in production, load from FastAPI)
     this.models = {
@@ -48,7 +51,7 @@ class FraudDetectionService {
 
       // Calculate risk score
       const riskScore = await this.calculateBehavioralRisk(profile);
-      this.riskScores[userId] = riskScore;
+      this.riskScores.set(userId, riskScore);
 
       return {
         userId,
@@ -566,17 +569,45 @@ class FraudDetectionService {
       .order('created_at', { ascending: false })
       .limit(1000);
 
-    const highRisk = scores.filter(s => s.risk_score > 0.7).length;
-    const mediumRisk = scores.filter(s => s.risk_score > 0.4 && s.risk_score <= 0.7).length;
-    const lowRisk = scores.filter(s => s.risk_score <= 0.4).length;
+    const safe = scores || [];
+
+    const highRisk = safe.filter(s => s.risk_score > 0.7).length;
+    const mediumRisk = safe.filter(s => s.risk_score > 0.4 && s.risk_score <= 0.7).length;
+    const lowRisk = safe.filter(s => s.risk_score <= 0.4).length;
 
     return {
-      total: scores.length,
+      total: safe.length,
       highRisk,
       mediumRisk,
       lowRisk,
-      avgScore: scores.reduce((sum, s) => sum + s.risk_score, 0) / scores.length || 0
+      avgScore: safe.reduce((sum, s) => sum + s.risk_score, 0) / safe.length || 0
     };
+  }
+
+  _evictStale() {
+    if (this.riskScores.size > this._maxRiskScores) {
+      const excess = this.riskScores.size - this._maxRiskScores;
+      const keys = [...this.riskScores.keys()];
+      for (let i = 0; i < excess; i++) {
+        this.riskScores.delete(keys[i]);
+      }
+    }
+    if (this.behavioralProfiles.size > this._maxBehavioralProfiles) {
+      const excess = this.behavioralProfiles.size - this._maxBehavioralProfiles;
+      let deleted = 0;
+      for (const key of this.behavioralProfiles.keys()) {
+        if (deleted >= excess) break;
+        this.behavioralProfiles.delete(key);
+        deleted++;
+      }
+    }
+  }
+
+  destroy() {
+    clearInterval(this._cleanupInterval);
+    this.riskScores.clear();
+    this.behavioralProfiles.clear();
+    this.redis.disconnect();
   }
 }
 

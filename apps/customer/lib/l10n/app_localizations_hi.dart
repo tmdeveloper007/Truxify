@@ -415,4 +415,22 @@ class AppLocalizationsHi extends AppLocalizations {
 
   @override
   String get failedToUpdateProfile => '\u092A\u094D\u0930\u094B\u092B\u093C\u093E\u0907\u0932 \u0905\u092A\u0921\u0947\u091F \u0915\u0930\u0928\u0947 \u092E\u0947\u0902 \u0905\u0938\u092B\u0932';
+
+  @override
+  String get downloadInvoice => '\u0907\u0928\u0935\u0949\u0907\u0938 \u0921\u093E\u0909\u0928\u0932\u094B\u0921 \u0915\u0930\u0947\u0902';
+
+  @override
+  String get generatingInvoice => '\u0907\u0928\u0935\u0949\u0907\u0938 \u092C\u0928\u093E \u0930\u0939\u0947 \u0939\u0948\u0964...';
+
+  @override
+  String get invoiceReady => '\u0907\u0928\u0935\u0949\u0907\u0938 \u0924\u0948\u092F\u093E\u0930 \u0939\u0948';
+
+  @override
+  String get shareInvoice => '\u0907\u0928\u0935\u0949\u0907\u0938 \u0938\u093E\u092E\u093E \u0915\u0930\u0947\u0902';
+
+  @override
+  String get printInvoice => '\u0907\u0928\u0935\u0949\u0907\u0938 \u092A\u094D\u0930\u093F\u0902\u091F \u0915\u0930\u0947\u0902';
+
+  @override
+  String get downloadFailed => '\u0921\u093E\u0909\u0928\u0932\u094B\u0921 \u0905\u0938\u092B\u0932';
 }

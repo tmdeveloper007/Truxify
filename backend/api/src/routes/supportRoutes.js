@@ -1,14 +1,11 @@
 import express from 'express';
 import { supabase } from '../config/db.js';
 import { authenticate } from '../middleware/auth.js';
-import { userLimiter, adminRateLimiter } from '../middleware/rateLimiter.js';
-import { authenticate } from '../middleware/auth.js';
-import { requirePolicy } from '../middleware/requirePolicy.js';
 import { userLimiter } from '../middleware/rateLimiter.js';
+import { requirePolicy } from '../middleware/requirePolicy.js';
 import { validateBody, validateParams } from '../middleware/validate.js';
 import logger from '../middleware/logger.js';
 import { createTicketSchema, updateTicketSchema, createTicketCommentSchema, paramIdSchema, uuidParamSchema } from '../validation/requestSchemas.js';
-
 
 const router = express.Router();
 

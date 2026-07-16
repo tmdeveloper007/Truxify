@@ -67,6 +67,7 @@ export class OrderTimelineService {
     }]);
     if (error) {
       logger.error('Failed to update timeline for change-drop:', error.message);
+      throw new DomainError(500, { error: 'Failed to record drop-change event.', details: error.message });
     }
   }
 

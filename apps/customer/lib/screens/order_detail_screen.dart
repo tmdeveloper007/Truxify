@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../constants/supabase_config.dart';
 import '../controllers/app_controller.dart';
 import '../models/app_models.dart';
+import '../services/invoice_pdf_service.dart';
 import '../services/order_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
@@ -25,6 +26,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   final OrderService _orderService = OrderService();
   RealtimeChannel? _ordersChannel;
   bool _ratingDialogShown = false;
+  bool _isGeneratingInvoice = false;
 
   @override
   void initState() {
@@ -321,6 +323,33 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
+  Future<void> _generateInvoice() async {
+    if (_isGeneratingInvoice) return;
+
+    setState(() => _isGeneratingInvoice = true);
+
+    try {
+      await InvoicePdfService.printOrShareInvoice(_currentOrder);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Invoice ready'),
+          backgroundColor: TruxifyColors.success,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to generate invoice: $e'),
+          backgroundColor: TruxifyColors.error,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isGeneratingInvoice = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isSuccess = _currentOrder.status == 'Delivered' || _currentOrder.status == 'Payment Released';
@@ -329,7 +358,22 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       appBar: AppBar(
         title: const Text('Order Details'),
         leading: IconButton(onPressed: () => Navigator.of(context).pop(), icon: const Icon(Icons.arrow_back_rounded)),
-        actions: [IconButton(onPressed: () {}, icon: const Icon(Icons.download_rounded))],
+        actions: [
+          if (_isGeneratingInvoice)
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+            )
+          else
+            IconButton(
+              onPressed: _generateInvoice,
+              icon: const Icon(Icons.download_rounded),
+            ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),

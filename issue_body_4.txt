@@ -1,0 +1,30 @@
+## Description
+
+In `backend/api/src/routes/orderRoutes.js` in the `GET /:id/timeline` handler, `order` is declared with `let` on line 489 and reassigned on lines 492/496. Then at line 504, a **duplicate `const order = await ...`** redeclaration appears:
+
+```javascript
+// Line 489
+let order = null;
+
+// Lines 492/496 - reassignments using let
+if (UUID_RE.test(orderId)) {
+  order = await orderValidationService.findOrderByIdOrDisplayId(orderId, '*');
+} else {
+  order = await orderValidationService.findOrderByDisplayForTimeline(orderId);
+}
+
+// Line 504 - DUPLICATE const redeclaration (SyntaxError)
+const order = await orderValidationService.findOrderByIdOrDisplayId(orderId, 'customer_id, driver_id, order_display_id');
+```
+
+`const` does not allow redeclaration of an existing variable in the same scope. This will cause a **SyntaxError** at load time, preventing the server from starting.
+
+## Impact
+
+**Critical** - Server fails to start due to SyntaxError in route file.
+
+## Suggested Fix
+
+Remove the duplicate code block on lines 504-506, which appears to be leftover dead code from an older implementation.
+
+GSSoC

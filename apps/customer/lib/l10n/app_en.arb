@@ -725,5 +725,35 @@
   "failedToUpdateProfile": "Failed to update profile",
   "@failedToUpdateProfile": {
     "description": "Error message when profile update fails"
+  },
+
+  "downloadInvoice": "Download Invoice",
+  "@downloadInvoice": {
+    "description": "Button text to download the order invoice as PDF"
+  },
+
+  "generatingInvoice": "Generating Invoice...",
+  "@generatingInvoice": {
+    "description": "Status text while the PDF invoice is being generated"
+  },
+
+  "invoiceReady": "Invoice ready",
+  "@invoiceReady": {
+    "description": "Success message after invoice PDF is generated"
+  },
+
+  "shareInvoice": "Share Invoice",
+  "@shareInvoice": {
+    "description": "Button text to share the generated invoice"
+  },
+
+  "printInvoice": "Print Invoice",
+  "@printInvoice": {
+    "description": "Button text to print the generated invoice"
+  },
+
+  "downloadFailed": "Download failed",
+  "@downloadFailed": {
+    "description": "Error message when invoice download or generation fails"
   }
 }

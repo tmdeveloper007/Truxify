@@ -1,0 +1,40 @@
+## Description
+
+In `apps/customer/lib/services/location_service.dart` at lines 123-126, the `extractCity` method has an insufficient boundary check:
+
+```dart
+String extractCity(String address) {
+    final parts = address.split(',');
+    return parts.length > 1 ? parts[parts.length - 3].trim() : parts.first.trim();
+}
+```
+
+The guard condition `parts.length > 1` is not strict enough:
+- When `parts.length` is exactly **2**, `parts.length - 3` evaluates to **`-1`**, and `parts[-1]` throws a **RangeError** in Dart (Dart lists do not support negative indexing, unlike Python)
+- When `parts.length` is exactly **3**, `parts[0]` is accessed (the street name, not the city component)
+
+For example, an address like `"123 Main St, Mumbai"` splits into `["123 Main St", "Mumbai"]` (length 2). The guard `length > 1` passes (2 > 1 is true), but `parts[2 - 3] = parts[-1]` crashes.
+
+## Impact
+
+**High** - Customer app crashes when viewing orders with 2-part addresses (e.g., "Street, City" format without state/country).
+
+## Steps to Reproduce
+
+1. Have an order with a simple 2-part address like `"123 Main St, Mumbai"`
+2. Navigate to any screen that calls `extractCity()`
+3. Observe RangeError crash
+
+## Suggested Fix
+
+Change the guard to `parts.length >= 3` (or `parts.length > 2`) to ensure the index `parts.length - 3` is always non-negative:
+
+```dart
+String extractCity(String address) {
+    final parts = address.split(',');
+    if (parts.length >= 3) return parts[parts.length - 3].trim();
+    return parts.first.trim();
+}
+```
+
+GSSoC

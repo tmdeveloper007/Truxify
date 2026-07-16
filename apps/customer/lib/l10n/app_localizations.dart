@@ -369,6 +369,18 @@ abstract class AppLocalizations {
   String get failedToLoadProfile;
 
   String get failedToUpdateProfile;
+
+  String get downloadInvoice;
+
+  String get generatingInvoice;
+
+  String get invoiceReady;
+
+  String get shareInvoice;
+
+  String get printInvoice;
+
+  String get downloadFailed;
 }
 
 class _AppLocalizationsDelegate

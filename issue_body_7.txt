@@ -1,0 +1,27 @@
+## Description
+
+In `backend/api/src/lib/redisLock.js` at lines 22-86, there is an **unresolved git merge conflict** between `fix/redis-lock-failure-handling` and `main`.
+
+The conflict pits two competing implementations:
+- **fix/redis-lock-failure-handling** side: Adds a `renewLock` function and returns `null` on Redis failures (defensive/fail-open approach)
+- **main** side: Throws exceptions on Redis unavailability (fail-closed approach)
+
+```javascript
+<<<<<<< fix/redis-lock-failure-handling
+  // renewLock function + null-returning implementation
+=======
+  // throwing implementation
+>>>>>>> main
+```
+
+This produces invalid JavaScript that causes a **SyntaxError** when the module is loaded, completely breaking distributed locking functionality.
+
+## Impact
+
+**Critical** - The distributed locking mechanism is completely broken. This affects concurrent order processing, OTP verification, and any other feature relying on Redis locks.
+
+## Suggested Fix
+
+Resolve the merge conflict by choosing one approach and removing all conflict markers. The `fix/redis-lock-failure-handling` branch is more defensive (returns null on failure), while `main` fails closed (throws). Choose based on the project's desired error-handling strategy.
+
+GSSoC

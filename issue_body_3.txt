@@ -1,0 +1,31 @@
+## Description
+
+In `backend/api/src/routes/orderRoutes.js` at line 490, the identifier `UUID_RE` is used to test an order ID format:
+
+```javascript
+if (UUID_RE.test(orderId)) {
+```
+
+However, `UUID_RE` is **never declared or imported** anywhere in `orderRoutes.js`. A search of the entire file reveals no `const UUID_RE` declaration or import statement for it.
+
+When the `GET /:id/timeline` endpoint is hit, this will throw a **ReferenceError: UUID_RE is not defined**, crashing the request handler.
+
+## Impact
+
+**High** - The timeline endpoint crashes on every request, making order timeline data unavailable.
+
+## Steps to Reproduce
+
+1. Start the server
+2. Send GET request to `/api/orders/{id}/timeline`
+3. Observe 500 error with ReferenceError
+
+## Suggested Fix
+
+Either import `UUID_RE` from `orderLifecycleService.js` (where it's defined) or add a local definition:
+
+```javascript
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+```
+
+GSSoC
