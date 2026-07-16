@@ -92,7 +92,7 @@ class DriverEarningsService {
 
       final transactions = decoded['transactions'];
       if (transactions is! List) {
-        return [];
+        throw StateError('Unexpected wallet transactions response type');
       }
 
       return transactions
@@ -103,6 +103,9 @@ class DriverEarningsService {
           .whereType<Map<String, dynamic>>()
           .toList();
     } catch (e) {
+      if (e is StateError) {
+        throw Exception(e.message);
+      }
       if (e is ApiException) {
         throw Exception(e.message.isNotEmpty ? e.message : 'Failed to load wallet history.');
       }
