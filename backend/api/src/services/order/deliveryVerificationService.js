@@ -161,37 +161,6 @@ export class DeliveryVerificationService {
     });
   }
 
-  async calculateDynamicToll(orderId, currentEstimate) {
-    try {
-      const mongoDb = getMongoDb();
-      if (!mongoDb) return currentEstimate;
-      
-      const trace = await mongoDb.collection('telemetry')
-        .find({ order_id: orderId })
-        .sort({ timestamp: 1 })
-        .toArray();
-      
-      if (!trace || trace.length < 2) return currentEstimate;
-      
-      let actualDistanceKm = 0;
-      for (let i = 1; i < trace.length; i++) {
-        const prev = trace[i-1];
-        const curr = trace[i];
-        if (prev.lat && prev.lng && curr.lat && curr.lng) {
-          actualDistanceKm += haversineKm(prev.lat, prev.lng, curr.lat, curr.lng);
-        }
-      }
-      
-      const rateCard = readRateCard();
-      const dynamicToll = Math.round(rateCard.tollPerKm * actualDistanceKm);
-      logger.info(`[Toll] Dynamic toll for order ${orderId} calculated as ${dynamicToll} (distance: ${actualDistanceKm.toFixed(2)}km)`);
-      return dynamicToll;
-    } catch (err) {
-      logger.error(`[Toll] Failed to calculate dynamic toll: ${err.message}`);
-      return currentEstimate;
-    }
-  }
-
   async verifyDelivery({ orderId, driverId, otp }) {
     return measureExecution('DeliveryVerificationService.verifyDelivery', async () => {
     const { order, otpRecord } = await this.validateDeliveryOtp({ orderId, driverId, otp });
@@ -210,6 +179,33 @@ export class DeliveryVerificationService {
       throw new DomainError(500, { error: 'Failed to verify OTP.', details: guardResult.error.message });
     }
 
+
+    const { data: tripData, error: rpcErr } = await this.orderRepository.executeRpc('complete_trip_tx', {
+      p_order_id: orderId,
+      p_otp_id: otpRecord.id,
+      p_release_tx_hash: null,
+    });
+
+    if (rpcErr) {
+      logger.error('complete_trip_tx RPC failed:', rpcErr.message);
+      throw new DomainError(500, { error: 'Failed to complete trip.', details: rpcErr.message });
+    }
+
+    const { data: verifiedOrder, error: verifyErr } = await this.orderRepository.findOrderById(orderId, 'status, escrow_status, escrow_release_attempts');
+
+    if (verifyErr || !verifiedOrder) {
+      logger.error(`[verify-delivery] Failed to verify order status after RPC for order ${orderId}`);
+      throw new DomainError(500, { error: 'Failed to verify order status after payment release.' });
+    }
+
+    if (verifiedOrder.status !== 'payment_released') {
+      logger.warn(`[verify-delivery] Order ${orderId} status changed to "${verifiedOrder.status}" — payment was not released.`);
+      throw new DomainError(409, {
+        error: 'Order status changed during processing. Payment was not released.',
+      });
+    }
+
+    await this.completeDeliveryOtp({ otpRecordId: otpRecord.id, orderId });
 
     let releaseTxHash = null;
     let escrowAlreadyReleased = false;
@@ -233,33 +229,6 @@ export class DeliveryVerificationService {
     } else {
       logger.info(`[escrow] Escrow not funded (status: ${order.escrow_status}) — skipping on-chain release.`);
     }
-
-    const { data: tripData, error: rpcErr } = await this.orderRepository.executeRpc('complete_trip_tx', {
-      p_order_id: orderId,
-      p_otp_id: otpRecord.id,
-      p_release_tx_hash: releaseTxHash,
-    });
-
-    if (rpcErr) {
-      logger.error('complete_trip_tx RPC failed:', rpcErr.message);
-      throw new DomainError(500, { error: 'Failed to complete trip and release payment.', details: rpcErr.message });
-    }
-
-    const { data: verifiedOrder, error: verifyErr } = await this.orderRepository.findOrderById(orderId, 'status, escrow_status, escrow_release_attempts');
-
-    if (verifyErr || !verifiedOrder) {
-      logger.error(`[verify-delivery] Failed to verify order status after RPC for order ${orderId}`);
-      throw new DomainError(500, { error: 'Failed to verify order status after payment release.' });
-    }
-
-    if (verifiedOrder.status !== 'payment_released') {
-      logger.warn(`[verify-delivery] Order ${orderId} status changed to "${verifiedOrder.status}" — payment was not released.`);
-      throw new DomainError(409, {
-        error: 'Order status changed during processing. Payment was not released.',
-      });
-    }
-
-    await this.completeDeliveryOtp({ otpRecordId: otpRecord.id, orderId });
 
     let escrowUpdateFailed = false;
     if (releaseTxHash || escrowAlreadyReleased) {

@@ -434,6 +434,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get thisLoadIsMissingId => 'This load is missing an ID';
 
   @override
+  String get unableToOpen => 'Unable to open notification';
   String get withdraw => 'Withdraw';
 
   @override

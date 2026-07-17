@@ -2,11 +2,11 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 
 import { bidLimiter, userLimiter, safeIpKeyGenerator, createStore } from '../middleware/rateLimiter.js';
-import { redisClient, mongoDb, supabase } from '../config/db.js';
+import { redisClient, mongoDb, supabase, createUserClient } from '../config/db.js';
 import { OrderRepository } from '../repositories/orderRepository.js';
 import { authenticate } from '../middleware/auth.js';
 import { requirePolicy } from '../middleware/requirePolicy.js';
-import { getRouteEstimate } from '../services/osrm.js';
+import { getRouteEstimate, getRouteGeometry, buildStraightLineGeometry } from '../services/osrm.js';
 import { computeOrderPricing } from '../lib/pricing.js';
 
 import { validateBody, validateParams } from '../middleware/validate.js';
@@ -62,10 +62,7 @@ const router = express.Router();
 const orderRepository = new OrderRepository(supabase);
 
 const orderValidationService = new OrderValidationService({ supabase, logger });
-const orderTimelineService = new OrderTimelineService({
-  supabase,
-  logger,
-});
+const orderTimelineService = new OrderTimelineService(orderRepository);
 const orderMilestoneService = new OrderMilestoneService({ orderValidationService, orderRepository, orderTimelineService });
 
 const bidAcceptanceService = new BidAcceptanceService({
@@ -77,21 +74,6 @@ const bidAcceptanceService = new BidAcceptanceService({
 });
 const deliveryVerificationService = new DeliveryVerificationService(orderRepository);
 
-
-const orderLifecycleService = new OrderLifecycleService({
-
-  orderRepository,
-  orderValidationService,
-  orderMilestoneService,
-  orderTimelineService,
-  orderLifecycleService,
-  deliveryVerificationService,
-  buildDepositTx,
-  recordDepositTx,
-  submitEscrowRefund,
-  confirmEscrowRefund,
-  escrowRefund,
-} from '../core/container.js';
 
 const router = express.Router();
 
@@ -168,6 +150,10 @@ router.post('/', authenticate, userLimiter, requirePolicy('order:create'), requi
     pickup_address, pickup_lat, pickup_lng,
     drop_address, drop_lat, drop_lng,
     goods_type, weight_tonnes,
+    pickup_date, pickup_time,
+    length_ft, width_ft, height_ft,
+    is_stackable, is_fragile, special_requirements,
+    payment_method_id, upi_id,
   } = req.body;
 
   if (pickup_address && pickup_address.length > 200) {
@@ -188,6 +174,7 @@ router.post('/', authenticate, userLimiter, requirePolicy('order:create'), requi
       dropLat: Number(drop_lat),
       dropLng: Number(drop_lng),
     });
+    let pricing;
     pricing = computeOrderPricing({
       pickupLat:  Number(pickup_lat),
       pickupLng:  Number(pickup_lng),
@@ -355,6 +342,7 @@ router.get('/load-offers', authenticate, userLimiter, async (req, res) => {
 
     if (error) return res.status(500).json({ error: 'Failed to fetch load offers.', details: error.message });
 
+    const cacheKey = `load-offers:${page}:${limit}`;
     if (redisClient) {
       await redisClient.set(cacheKey, JSON.stringify(offers), 'EX', 120).catch(() => {});
     }
@@ -380,6 +368,7 @@ router.get('/load-offers/en-route', authenticate, userLimiter, async (req, res) 
 
     if (error) return res.status(500).json({ error: 'Failed to fetch en-route loads.', details: error.message });
 
+    const cacheKey = `load-offers:${page}:${limit}`;
     if (redisClient) {
       await redisClient.set(cacheKey, JSON.stringify(offers), 'EX', 120).catch(() => {});
     }
@@ -542,30 +531,6 @@ router.post('/:id/ratings', authenticate, userLimiter, requirePolicy('order:subm
   try {
     const orderId = req.params.id;
     const { stars, comment } = req.body;
-    const { data: order, error: orderErr } = await orderRepository.findOrderById(orderId, 'id, order_display_id, customer_id, driver_id, status');
-
-    if (orderErr) {
-      return res.status(500).json({ error: 'Failed to fetch order.', details: orderErr.message });
-    }
-
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found.' });
-    }
-
-    if (order.customer_id !== req.user.id) {
-      return res.status(403).json({ error: 'Access Denied: You do not own this order.' });
-    }
-
-    if (!['delivered', 'payment_released'].includes(order.status)) {
-      return res.status(400).json({ error: 'Order must be delivered before a rating can be submitted.' });
-    }
-
-    if (!order.driver_id) {
-      return res.status(400).json({ error: 'Order does not have an assigned driver.' });
-    }
-
-
-  try {
     const order = await orderValidationService.findOrderByIdOrDisplayId(orderId, 'id, order_display_id, customer_id, driver_id, status');
     orderValidationService.assertOrderFound(order);
     orderValidationService.assertCustomerOwnership(order, req.user.id);
@@ -578,7 +543,7 @@ router.post('/:id/ratings', authenticate, userLimiter, requirePolicy('order:subm
       p_driver_id: order.driver_id,
       p_stars: stars,
       p_comment: comment,
-    });
+    }, req.token ? createUserClient(req.token) : undefined);
 
     if (rpcErr) {
       return res.status(500).json({ error: 'Failed to submit rating.', details: rpcErr.message });
@@ -625,7 +590,7 @@ router.post('/:id/ratings', authenticate, userLimiter, requirePolicy('order:subm
 // 10. VIEW BIDS FOR AN ORDER (CUSTOMER)
 // ============================================================================
 router.get('/:id/bids', authenticate, userLimiter, requirePolicy('order:view-bids'), validateParams(paramIdSchema), async (req, res) => {
-
+  const orderId = req.params.id;
   try {
     const order = await orderValidationService.findOrderByIdOrDisplayId(orderId, 'order_display_id, customer_id');
     if (!order) return res.status(403).json({ error: 'Access Denied: You do not own this order.' });
@@ -778,6 +743,7 @@ router.post('/:id/resend-otp', authenticate, userLimiter, resendOtpLimiter, requ
 // ============================================================================
 router.put('/:id/change-drop', authenticate, userLimiter, changeDropLimiter, requirePolicy('order:change-drop'), validateParams(paramIdSchema), validateBody(changeDropSchema), async (req, res) => {
   const { id: orderId } = req.params;
+  const { drop_address, drop_lat, drop_lng } = req.body;
   try {
     const order = await orderValidationService.findOrderByIdOrDisplayId(orderId, '*');
     orderValidationService.assertOrderFound(order);
@@ -872,6 +838,7 @@ router.put('/:id/change-drop', authenticate, userLimiter, changeDropLimiter, req
 // ============================================================================
 router.post('/:id/cancel', authenticate, userLimiter, requirePolicy('order:cancel'), requireIdempotency(86400), validateParams(paramIdSchema), validateBody(cancelOrderSchema), async (req, res) => {
   const { id: orderId } = req.params;
+  const { reason } = req.body;
   try {
     const order = await orderValidationService.findOrderByIdOrDisplayId(orderId, '*');
     orderValidationService.assertOrderFound(order);

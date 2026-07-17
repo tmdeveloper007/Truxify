@@ -15,7 +15,6 @@ import { userLimiter } from '../middleware/rateLimiter.js';
 import { invalidateCachedProfile, invalidateCachedSupabaseProfile } from '../lib/profileCache.js';
 import { firebaseAdmin } from '../config/db.js';
 import logger from '../middleware/logger.js';
-import { userLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 

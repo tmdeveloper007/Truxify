@@ -376,6 +376,7 @@ abstract class AppLocalizations {
 
   String get thisLoadIsMissingId;
 
+  String get unableToOpen;
   String get withdraw;
 
   String get withdrawFunds;

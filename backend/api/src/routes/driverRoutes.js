@@ -1,5 +1,5 @@
 import express from 'express';
-import { supabase, redisClient } from '../config/db.js';
+import { supabase, redisClient, createUserClient } from '../config/db.js';
 import { getDriverReputation } from '../services/reputation.js';
 import { authenticate } from '../middleware/auth.js';
 import { requirePolicy } from '../middleware/requirePolicy.js';
@@ -431,7 +431,8 @@ router.post('/wallet/withdraw', authenticate, userLimiter, requirePolicy('driver
     }
 
     // 5.2 Execute atomically via Supabase RPC
-    const { error: rpcErr } = await supabase.rpc('withdraw_funds_tx', {
+    const userClient = req.token ? createUserClient(req.token) : supabase;
+    const { error: rpcErr } = await userClient.rpc('withdraw_funds_tx', {
       p_driver_id: req.user.id,
       p_amount:    amount
     });

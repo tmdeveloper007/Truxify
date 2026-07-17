@@ -1,10 +1,12 @@
 import logger from '../../middleware/logger.js';
-import Redis from 'ioredis';
-import { supabase } from '../../config/db.js';
+import { redisClient, supabase } from '../../config/db.js';
 
 class FraudDetectionService {
   constructor() {
-    this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+    this.redis = redisClient;
+    if (!this.redis) {
+      logger.warn('[FraudDetection] Redis not configured — behavior tracking will use Supabase only');
+    }
     this.behavioralProfiles = new Map();
     this.fraudThreshold = parseFloat(process.env.FRAUD_THRESHOLD) || 0.7;
     this.riskScores = new Map();
@@ -43,11 +45,13 @@ class FraudDetectionService {
       this.updateBehavioralPatterns(profile, eventData);
       
       // Store in Redis
-      await this.redis.setex(
-        `behavior:${userId}`,
-        3600,
-        JSON.stringify(profile)
-      );
+      if (this.redis) {
+        await this.redis.setex(
+          `behavior:${userId}`,
+          3600,
+          JSON.stringify(profile)
+        );
+      }
 
       // Calculate risk score
       const riskScore = await this.calculateBehavioralRisk(profile);
@@ -69,7 +73,7 @@ class FraudDetectionService {
 
   async getOrCreateProfile(userId) {
     // Check Redis cache
-    const cached = await this.redis.get(`behavior:${userId}`);
+    const cached = this.redis ? await this.redis.get(`behavior:${userId}`) : null;
     if (cached) {
       return JSON.parse(cached);
     }
@@ -488,15 +492,17 @@ class FraudDetectionService {
       }]);
 
     // Cache in Redis
-    await this.redis.setex(
-      `risk:${userId}`,
-      3600,
-      JSON.stringify({
-        score,
-        components,
-        timestamp: Date.now()
-      })
-    );
+    if (this.redis) {
+      await this.redis.setex(
+        `risk:${userId}`,
+        3600,
+        JSON.stringify({
+          score,
+          components,
+          timestamp: Date.now()
+        })
+      );
+    }
   }
 
   // ============ Auto-Review Queue ============
@@ -604,10 +610,12 @@ class FraudDetectionService {
   }
 
   destroy() {
-    clearInterval(this._cleanupInterval);
+    if (this._cleanupInterval) {
+      clearInterval(this._cleanupInterval);
+      this._cleanupInterval = null;
+    }
     this.riskScores.clear();
     this.behavioralProfiles.clear();
-    this.redis.disconnect();
   }
 }
 

@@ -329,6 +329,32 @@ class OrderService {
     }
   }
 
+  /// Submits a star rating (and optional comment) for a delivered order.
+  ///
+  /// Calls `POST /api/orders/:id/ratings` with `{ stars, comment }`.
+  /// Returns the rating payload from the server on success.
+  /// Throws [StateError] on API or network failure.
+  Future<Map<String, dynamic>> submitRating({
+    required String orderId,
+    required int stars,
+    String? comment,
+  }) async {
+    try {
+      final body = await _apiClient.post(
+        '/api/orders/${_encodePathSegment(orderId)}/ratings',
+        body: <String, dynamic>{
+          'stars': stars,
+          if (comment != null && comment.isNotEmpty) 'comment': comment,
+        },
+      );
+      return body is Map<String, dynamic> ? body : <String, dynamic>{};
+    } on ApiException catch (e) {
+      throw StateError(e.message);
+    } catch (e) {
+      throw StateError('Failed to submit rating: $e');
+    }
+  }
+
   Future<Map<String, dynamic>> fetchOrderRoute(String orderDisplayId) async {
     try {
       final body = await _apiClient.get(

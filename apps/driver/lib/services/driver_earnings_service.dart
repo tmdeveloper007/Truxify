@@ -92,7 +92,7 @@ class DriverEarningsService {
 
       final transactions = decoded['transactions'];
       if (transactions is! List) {
-        return [];
+        throw StateError('Unexpected wallet transactions response type');
       }
 
       return transactions
@@ -103,6 +103,9 @@ class DriverEarningsService {
           .whereType<Map<String, dynamic>>()
           .toList();
     } catch (e) {
+      if (e is StateError) {
+        throw Exception(e.message);
+      }
       if (e is ApiException) {
         throw Exception(e.message.isNotEmpty ? e.message : 'Failed to load wallet history.');
       }
@@ -132,7 +135,14 @@ class DriverEarningsService {
           .gte('day_date', start.toIso8601String().split('T').first)
           .lt('day_date', end.toIso8601String().split('T').first)
           .order('day_date');
-      return List<Map<String, dynamic>>.from(response);
+      if (response is! List) {
+        throw StateError('Unexpected monthly earnings response type');
+      }
+      return response.map((item) {
+        if (item is Map<String, dynamic>) return item;
+        if (item is Map) return Map<String, dynamic>.from(item);
+        throw StateError('Unexpected monthly earnings item type');
+      }).toList(growable: false);
     }
 
     final days = daysSinceMonthStart.clamp(1, 365);
@@ -233,10 +243,19 @@ class DriverEarningsService {
     try {
       final decoded = await _apiClient.get(path);
       
-      if (decoded is! Map) return {};
+      if (decoded is! Map) {
+        throw StateError('Unexpected driver stats response type');
+      }
 
-      return Map<String, dynamic>.from(decoded['stats'] ?? {});
+      final stats = decoded['stats'];
+      if (stats == null) return {};
+      if (stats is Map<String, dynamic>) return stats;
+      if (stats is Map) return Map<String, dynamic>.from(stats);
+      throw StateError('Unexpected driver stats payload type');
     } catch (e) {
+      if (e is StateError) {
+        throw Exception(e.message);
+      }
       if (e is ApiException) {
         throw Exception(e.message.isNotEmpty ? e.message : 'Failed to load driver stats.');
       }
@@ -252,8 +271,14 @@ class DriverEarningsService {
         .select('wallet_confirmed, wallet_pending, wallet_total')
         .eq('user_id', driverId!);
 
+    if (response is! List) {
+      throw StateError('Unexpected wallet summary response type');
+    }
     if (response.isNotEmpty) {
-      return Map<String, dynamic>.from(response.first as Map);
+      final first = response.first;
+      if (first is Map<String, dynamic>) return first;
+      if (first is Map) return Map<String, dynamic>.from(first);
+      throw StateError('Unexpected wallet summary item type');
     }
     return {};
   }

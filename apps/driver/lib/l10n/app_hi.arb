@@ -720,6 +720,9 @@
     "description": "Error message when a load record has no valid identifier"
   },
 
+  "unableToOpen": "सूचना खोलने में असमर्थ",
+  "@unableToOpen": {
+    "description": "Error message when a notification cannot be navigated to"
   "withdraw": "निकालें",
   "@withdraw": {
     "description": "Button label to withdraw funds from wallet"

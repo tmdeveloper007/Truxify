@@ -417,6 +417,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get failedToUpdateProfile => 'Failed to update profile';
 
   @override
+  String get orderNotFound => 'Order not found';
+
+  @override
+  String get notification => 'Notification';
+
+  @override
+  String get unableToOpen => 'Unable to open notification';
   String get downloadInvoice => 'Download Invoice';
 
   @override

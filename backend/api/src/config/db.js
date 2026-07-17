@@ -47,6 +47,31 @@ if (supabaseUrl && supabaseAnonKey) {
   );
 }
 
+/**
+ * Creates a per-request Supabase client authenticated with the given JWT.
+ * The resulting client carries the user's identity so that
+ * SECURITY DEFINER RPCs that call auth.uid() receive the correct user.
+ *
+ * @param {string} accessToken — a valid Supabase or Firebase access token
+ * @returns {import('@supabase/supabase-js').SupabaseClient}
+ */
+export function createUserClient(accessToken) {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error('Cannot create user client: SUPABASE_URL or SUPABASE_ANON_KEY is not configured.');
+  }
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  });
+}
+
 if (supabaseUrl && supabaseServiceKey && supabaseServiceKey !== supabaseAnonKey) {
   try {
     supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {

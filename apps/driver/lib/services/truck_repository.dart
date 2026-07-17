@@ -37,7 +37,16 @@ class TruckRepository {
         .eq('truck_id', truckId)
         .order('created_at', ascending: false);
 
-    return List<Map<String, dynamic>>.from(response)
+    if (response is! List) {
+      throw StateError('Unexpected ticket response type');
+    }
+
+    return response
+        .map((item) {
+          if (item is Map<String, dynamic>) return item;
+          if (item is Map) return Map<String, dynamic>.from(item);
+          throw StateError('Unexpected ticket item type');
+        })
         .map(TruckMaintenanceTicket.fromJson)
         .toList(growable: false);
   }
@@ -108,6 +117,13 @@ class TruckRepository {
         .select()
         .eq('truck_id', truckId)
         .order('expires_at', ascending: true);
-    return List<Map<String, dynamic>>.from(response);
+    if (response is! List) {
+      throw StateError('Unexpected truck document response type');
+    }
+    return response.map((item) {
+      if (item is Map<String, dynamic>) return item;
+      if (item is Map) return Map<String, dynamic>.from(item);
+      throw StateError('Unexpected truck document item type');
+    }).toList(growable: false);
   }
 }

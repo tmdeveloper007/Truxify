@@ -27,6 +27,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   RealtimeChannel? _ordersChannel;
   bool _ratingDialogShown = false;
   bool _isGeneratingInvoice = false;
+  bool _isSubmittingRating = false;
+  bool _ratingSubmitted = false;
 
   @override
   void initState() {
@@ -276,7 +278,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     });
   }
 
-  void _submitRating() {
+  Future<void> _submitRating() async {
     if (_rating == 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select a rating before submitting.')),
@@ -284,14 +286,79 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       return;
     }
 
-    final comment = _commentController.text.trim();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Thanks for your review! You submitted a $_rating-star rating${comment.isNotEmpty ? ' with a comment.' : '.'}',
+    if (_isSubmittingRating) return;
+
+    setState(() => _isSubmittingRating = true);
+
+    try {
+      final comment = _commentController.text.trim();
+      await _orderService.submitRating(
+        orderId: _currentOrder.orderId,
+        stars: _rating,
+        comment: comment.isNotEmpty ? comment : null,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _ratingSubmitted = true;
+        _isSubmittingRating = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Rating submitted successfully!'),
+          backgroundColor: TruxifyColors.success,
         ),
-      ),
-    );
+      );
+    } on StateError catch (e) {
+      if (!mounted) return;
+
+      final message = e.message;
+
+      if (message.contains('409') || message.toLowerCase().contains('already')) {
+        setState(() {
+          _ratingSubmitted = true;
+          _isSubmittingRating = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You have already rated this order.'),
+          ),
+        );
+        return;
+      }
+
+      setState(() => _isSubmittingRating = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to submit rating: $message'),
+          backgroundColor: TruxifyColors.error,
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: _submitRating,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() => _isSubmittingRating = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('An unexpected error occurred: $e'),
+          backgroundColor: TruxifyColors.error,
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: _submitRating,
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _showReceipt() async {
@@ -481,21 +548,72 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           ),
           const SizedBox(height: 18),
           if (isSuccess) ...[
-            Text('Rate your driver', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 10),
-            Row(
-              children: List.generate(5, (index) {
-                final selected = index < _rating;
-                return IconButton(
-                  onPressed: () => setState(() => _rating = index + 1),
-                  icon: Icon(selected ? Icons.star_rounded : Icons.star_border_rounded, color: Colors.amber, size: 30),
-                );
-              }),
-            ),
-            const SizedBox(height: 8),
-            TextField(controller: _commentController, maxLines: 3, decoration: const InputDecoration(labelText: 'Comment')),
-            const SizedBox(height: 12),
-            PrimaryButton(label: 'Submit Rating', onPressed: _submitRating),
+            if (_ratingSubmitted) ...[
+              Text('Your Rating', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              InfoCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        ...List.generate(5, (index) {
+                          return Icon(
+                            index < _rating ? Icons.star_rounded : Icons.star_border_rounded,
+                            color: Colors.amber,
+                            size: 28,
+                          );
+                        }),
+                        const SizedBox(width: 8),
+                        Text('$_rating/5', style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                    if (_commentController.text.trim().isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(_commentController.text.trim(), style: Theme.of(context).textTheme.bodyMedium),
+                    ],
+                    const SizedBox(height: 8),
+                    Text(
+                      'You have already rated this order.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: TruxifyColors.adaptiveSecondaryText(context),
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ] else ...[
+              Text('Rate your driver', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              Row(
+                children: List.generate(5, (index) {
+                  final selected = index < _rating;
+                  return IconButton(
+                    onPressed: _isSubmittingRating ? null : () => setState(() => _rating = index + 1),
+                    icon: Icon(selected ? Icons.star_rounded : Icons.star_border_rounded, color: Colors.amber, size: 30),
+                  );
+                }),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _commentController,
+                maxLines: 3,
+                decoration: const InputDecoration(labelText: 'Comment'),
+                enabled: !_isSubmittingRating,
+              ),
+              const SizedBox(height: 12),
+              if (_isSubmittingRating)
+                const SizedBox(
+                  width: double.infinity,
+                  child: Center(child: Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2.5)),
+                  )),
+                )
+              else
+                PrimaryButton(label: 'Submit Rating', onPressed: _submitRating),
+            ],
           ],
         ],
       ),

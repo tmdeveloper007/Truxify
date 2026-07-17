@@ -53,6 +53,7 @@ import { initWebRTCSignaling, closeWebRTCSignaling } from './sockets/webrtc.js'
 // ============================================================================
 import fraudRoutes from './routes/fraudRoutes.js'
 import { fraudDetectionMiddleware, networkAnalysisMiddleware } from './middleware/fraudMiddleware.js'
+import fraudDetection from './services/fraud/FraudDetectionService.js'
 
 // ============================================================================
 // 🆕 ZK-PROOFS FOR DRIVER KYC
@@ -573,6 +574,7 @@ async function shutdown (signal) {
   stopEscrowRefundReconciliation()
   stopReputationReconciliation()
   stopDlqWorker()
+  fraudDetection.destroy()
 
   const forceExit = setTimeout(() => {
     logger.error('[shutdown] Timeout exceeded — forcing exit.')

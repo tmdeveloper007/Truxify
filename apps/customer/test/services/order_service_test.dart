@@ -310,6 +310,108 @@ void main() {
       expect(draft.minCapacity, isNull);
       expect(draft.maxCapacity, isNull);
       expect(draft.materialType, isNull);
+  group('submitRating', () {
+    test('sends correct payload to POST /api/orders/:id/ratings', () async {
+      when(() => apiClient.post(
+            '/api/orders/ORD-100/ratings',
+            body: any(named: 'body'),
+          )).thenAnswer((_) async => {
+            'message': 'Rating submitted successfully.',
+            'rating': {
+              'order_display_id': 'ORD-100',
+              'customer_id': 'user_123',
+              'driver_id': 'driver-abc',
+              'stars': 5,
+              'comment': 'Great delivery!',
+            },
+          });
+
+      final result = await orderService.submitRating(
+        orderId: 'ORD-100',
+        stars: 5,
+        comment: 'Great delivery!',
+      );
+
+      expect(result['message'], equals('Rating submitted successfully.'));
+      expect(result['rating']['stars'], equals(5));
+
+      verify(
+        () => apiClient.post(
+          '/api/orders/ORD-100/ratings',
+          body: {'stars': 5, 'comment': 'Great delivery!'},
+        ),
+      ).called(1);
+    });
+
+    test('omits comment when null or empty', () async {
+      when(() => apiClient.post(
+            '/api/orders/ORD-200/ratings',
+            body: any(named: 'body'),
+          )).thenAnswer((_) async => {
+            'message': 'Rating submitted successfully.',
+            'rating': {'stars': 3},
+          });
+
+      await orderService.submitRating(orderId: 'ORD-200', stars: 3);
+
+      verify(
+        () => apiClient.post(
+          '/api/orders/ORD-200/ratings',
+          body: {'stars': 3},
+        ),
+      ).called(1);
+    });
+
+    test('throws StateError on ApiException', () async {
+      when(() => apiClient.post(
+            any(),
+            body: any(named: 'body'),
+          )).thenThrow(const ApiException(400, 'Order must be delivered'));
+
+      await expectLater(
+        () => orderService.submitRating(orderId: 'ORD-300', stars: 4),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('Order must be delivered'),
+          ),
+        ),
+      );
+    });
+
+    test('throws StateError on generic exception', () async {
+      when(() => apiClient.post(
+            any(),
+            body: any(named: 'body'),
+          )).thenThrow(Exception('network timeout'));
+
+      await expectLater(
+        () => orderService.submitRating(orderId: 'ORD-400', stars: 2),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('Failed to submit rating'),
+          ),
+        ),
+      );
+    });
+
+    test('encodes special characters in order ID', () async {
+      when(() => apiClient.post(
+            '/api/orders/ORD%2F123%23abc/ratings',
+            body: any(named: 'body'),
+          )).thenAnswer((_) async => {'message': 'ok'});
+
+      await orderService.submitRating(orderId: 'ORD/123#abc', stars: 1);
+
+      verify(
+        () => apiClient.post(
+          '/api/orders/ORD%2F123%23abc/ratings',
+          body: {'stars': 1},
+        ),
+      ).called(1);
     });
   });
 }

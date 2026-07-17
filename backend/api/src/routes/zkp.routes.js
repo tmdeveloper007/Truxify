@@ -1,11 +1,13 @@
 import express from 'express';
 import zkpService from '../services/zkp/zkp.service.js';
 import logger from '../middleware/logger.js';
+import { authenticate, requireRole } from '../middleware/auth.js';
+import { userLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 
 // Verify driver KYC using ZK-SNARK
-router.post('/zkp/verify', async (req, res) => {
+router.post('/zkp/verify', authenticate, userLimiter, async (req, res) => {
   try {
     const { userId, name, licenseNumber, rcNumber, insuranceNumber, issueDate, expiryDate } = req.body;
     
@@ -50,7 +52,7 @@ router.post('/zkp/verify', async (req, res) => {
 });
 
 // Check verification status
-router.get('/zkp/status/:userId', async (req, res) => {
+router.get('/zkp/status/:userId', authenticate, userLimiter, async (req, res) => {
   try {
     const { userId } = req.params;
     const verified = await zkpService.isVerified(userId);
@@ -73,10 +75,9 @@ router.get('/zkp/status/:userId', async (req, res) => {
 });
 
 // Get document hash (regulator only)
-router.get('/zkp/document-hash/:userId', async (req, res) => {
+router.get('/zkp/document-hash/:userId', authenticate, userLimiter, requireRole(['REGULATOR']), async (req, res) => {
   try {
     const { userId } = req.params;
-    // Check if user is regulator (add middleware)
     const hash = await zkpService.getDocumentHash(userId);
     
     res.json({
@@ -97,7 +98,7 @@ router.get('/zkp/document-hash/:userId', async (req, res) => {
 });
 
 // Get verification stats
-router.get('/zkp/stats', async (req, res) => {
+router.get('/zkp/stats', authenticate, userLimiter, requireRole(['REGULATOR']), async (req, res) => {
   try {
     const stats = await zkpService.getVerificationStats();
     

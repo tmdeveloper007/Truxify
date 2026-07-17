@@ -125,6 +125,7 @@ class MarketplaceRepository {
     double d(String key, [double fallback = 0]) => (row[key] as num?)?.toDouble() ?? fallback;
     int i(String key, [int fallback = 0]) => (row[key] as num?)?.toInt() ?? fallback;
     bool b(String key, [bool fallback = false]) => (row[key] as bool?) ?? fallback;
+    double? nullableDouble(String key) => (row[key] as num?)?.toDouble();
 
     final freightValue = row.containsKey('freight_value')
         ? _formatCurrency(n('freight_value'))
@@ -138,6 +139,17 @@ class MarketplaceRepository {
         : (row.containsKey('estimatedProfit') ? s('estimatedProfit') : s('estimated_profit', netProfit));
 
     final isBestProfit = b('is_best_profit', b('best_profit', false));
+
+    // Raw numeric data for ML payloads (nullable for backward compatibility).
+    final originLat = nullableDouble('origin_lat');
+    final originLng = nullableDouble('origin_lng');
+    final destLat = nullableDouble('dest_lat');
+    final destLng = nullableDouble('dest_lng');
+    final weightKg = nullableDouble('weight_kg');
+    final lengthM = nullableDouble('length_m');
+    final widthM = nullableDouble('width_m');
+    final heightM = nullableDouble('height_m');
+    final paymentInr = nullableDouble('payment_inr');
 
     return LoadOffer(
       id: s('id'),
@@ -159,7 +171,7 @@ class MarketplaceRepository {
       bestProfit: isBestProfit,
       routeDistance: s('route_distance', '—'),
       routeDuration: s('route_duration', '—'),
-      weight: row.containsKey('weight_kg') ? '${n('weight_kg')} kg' : s('weight', '—'),
+      weight: weightKg != null ? '${_formatWeight(weightKg)} kg' : s('weight', '—'),
       dimensions: s('dimensions', '—'),
       stackable: s('stackable', '—'),
       fragile: s('fragile', '—'),
@@ -173,7 +185,70 @@ class MarketplaceRepository {
           : s('extraEarnings', '₹0'),
       spaceAvailable: s('space_available', '—'),
       updatedTotalEarnings: s('updated_total_earnings', '—'),
+      originLat: originLat,
+      originLng: originLng,
+      destinationLat: destLat,
+      destinationLng: destLng,
+      weightKg: weightKg,
+      lengthM: lengthM,
+      widthM: widthM,
+      heightM: heightM,
+      paymentInr: paymentInr,
     );
+  }
+
+  /// Builds the deadhead recommendation payload matching the ML engine's
+  /// [DeadheadInput] schema.  Loads with incomplete coordinate/cargo data are
+  /// silently filtered out so the ML model never receives 0.0 placeholders.
+  ///
+  /// [loads] – available load offers (from [fetchLoadOffers] /
+  ///           [fetchEnRouteLoads]).
+  /// [driverLat], [driverLng] – the driver's current GPS coordinates.
+  /// [truckMaxWeightKg] … [truckMaxHeightM] – truck capacity limits.
+  /// [arrivalTime] – ISO-8601 datetime string for when the driver arrives
+  ///                  at their destination.
+  Map<String, dynamic> buildDeadheadPayload({
+    required List<LoadOffer> loads,
+    required double driverLat,
+    required double driverLng,
+    required double truckMaxWeightKg,
+    required double truckMaxLengthM,
+    required double truckMaxWidthM,
+    required double truckMaxHeightM,
+    required String arrivalTime,
+  }) {
+    final validLoads = <Map<String, dynamic>>[];
+    for (final load in loads) {
+      if (!load.hasDeadheadData) continue;
+      validLoads.add(<String, dynamic>{
+        'load_id': load.id,
+        'origin_lat': load.originLat,
+        'origin_lng': load.originLng,
+        'dest_lat': load.destinationLat,
+        'dest_lng': load.destinationLng,
+        'weight_kg': load.weightKg,
+        'length_m': load.lengthM ?? 0.0,
+        'width_m': load.widthM ?? 0.0,
+        'height_m': load.heightM ?? 0.0,
+        'pickup_deadline': arrivalTime,
+        'payment_inr': load.paymentInr,
+      });
+    }
+
+    return <String, dynamic>{
+      'driver_destination': <String, dynamic>{
+        'lat': driverLat,
+        'lng': driverLng,
+      },
+      'truck_specs': <String, dynamic>{
+        'max_weight_kg': truckMaxWeightKg,
+        'max_length_m': truckMaxLengthM,
+        'max_width_m': truckMaxWidthM,
+        'max_height_m': truckMaxHeightM,
+      },
+      'arrival_time': arrivalTime,
+      'available_loads': validLoads,
+    };
   }
 
   /// Subscribes to new available load offers via Supabase Realtime postgres_changes.
@@ -233,5 +308,10 @@ class MarketplaceRepository {
     final rupees = value / 100;
     final rounded = rupees.round();
     return '₹$rounded';
+  }
+
+  String _formatWeight(double kg) {
+    if (kg == kg.roundToDouble()) return '${kg.toInt()}';
+    return kg.toStringAsFixed(1);
   }
 }

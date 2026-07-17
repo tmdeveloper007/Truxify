@@ -434,6 +434,7 @@ class AppLocalizationsHi extends AppLocalizations {
   String get thisLoadIsMissingId => 'इस लोड में ID गायब है';
 
   @override
+  String get unableToOpen => 'सूचना खोलने में असमर्थ';
   String get withdraw => 'निकालें';
 
   @override

@@ -1,4 +1,4 @@
-import { supabase, redisClient } from '../config/db.js';
+import { supabaseAdmin, redisClient } from '../config/db.js';
 import { escrowRelease } from './escrow.js';
 import logger from '../middleware/logger.js';
 import os from 'os';
@@ -32,7 +32,7 @@ export async function reconcilePendingEscrowReleases() {
 
   try {
     const instanceId = process.env.HOSTNAME || os.hostname();
-    const { data: failedOrders, error } = await supabase
+    const { data: failedOrders, error } = await supabaseAdmin
       .from('orders')
       .select('id, order_display_id, escrow_release_attempts')
       .eq('escrow_status', 'release_failed')
@@ -58,7 +58,7 @@ export async function reconcilePendingEscrowReleases() {
         }
       }
       try {
-        const { data: claimed, error: claimError } = await supabase
+        const { data: claimed, error: claimError } = await supabaseAdmin
           .rpc('claim_release_reconciliation', {
             p_order_id: order.id,
             p_instance_id: instanceId,
@@ -70,7 +70,7 @@ export async function reconcilePendingEscrowReleases() {
         }
 
         if (claimError) {
-          const { data: existing } = await supabase
+          const { data: existing } = await supabaseAdmin
             .from('orders')
             .select('escrow_status, reconciled_by')
             .eq('id', order.id)
@@ -90,7 +90,7 @@ export async function reconcilePendingEscrowReleases() {
         }
 
         const releasedAt = new Date().toISOString();
-        const { error: updateError } = await supabase
+        const { error: updateError } = await supabaseAdmin
           .from('orders')
           .update({
             escrow_status: 'released',
@@ -102,7 +102,7 @@ export async function reconcilePendingEscrowReleases() {
             updated_at: releasedAt,
           })
           .eq('id', order.id)
-          .eq('escrow_status', 'release_failed')
+      .in('escrow_status', ['release_failed', 'funded'])
           .is('reconciled_by', null);
 
         if (updateError) {
@@ -117,7 +117,7 @@ export async function reconcilePendingEscrowReleases() {
         const releaseAttemptedAt = new Date().toISOString();
         const releaseAttempts = (order.escrow_release_attempts || 0) + 1;
 
-        const { error: attemptError } = await supabase
+        const { error: attemptError } = await supabaseAdmin
           .from('orders')
           .update({
             escrow_release_attempts: releaseAttempts,

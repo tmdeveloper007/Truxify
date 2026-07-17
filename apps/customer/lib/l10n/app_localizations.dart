@@ -370,6 +370,11 @@ abstract class AppLocalizations {
 
   String get failedToUpdateProfile;
 
+  String get orderNotFound;
+
+  String get notification;
+
+  String get unableToOpen;
   String get downloadInvoice;
 
   String get generatingInvoice;
