@@ -586,7 +586,7 @@ router.post('/:id/ratings', authenticate, userLimiter, requirePolicy('order:subm
 // 10. VIEW BIDS FOR AN ORDER (CUSTOMER)
 // ============================================================================
 router.get('/:id/bids', authenticate, userLimiter, requirePolicy('order:view-bids'), validateParams(paramIdSchema), async (req, res) => {
-
+  const orderId = req.params.id;
   try {
     const order = await orderValidationService.findOrderByIdOrDisplayId(orderId, 'order_display_id, customer_id');
     if (!order) return res.status(403).json({ error: 'Access Denied: You do not own this order.' });
