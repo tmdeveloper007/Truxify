@@ -243,10 +243,19 @@ class DriverEarningsService {
     try {
       final decoded = await _apiClient.get(path);
       
-      if (decoded is! Map) return {};
+      if (decoded is! Map) {
+        throw StateError('Unexpected driver stats response type');
+      }
 
-      return Map<String, dynamic>.from(decoded['stats'] ?? {});
+      final stats = decoded['stats'];
+      if (stats == null) return {};
+      if (stats is Map<String, dynamic>) return stats;
+      if (stats is Map) return Map<String, dynamic>.from(stats);
+      throw StateError('Unexpected driver stats payload type');
     } catch (e) {
+      if (e is StateError) {
+        throw Exception(e.message);
+      }
       if (e is ApiException) {
         throw Exception(e.message.isNotEmpty ? e.message : 'Failed to load driver stats.');
       }
