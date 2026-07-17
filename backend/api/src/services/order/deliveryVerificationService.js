@@ -180,6 +180,33 @@ export class DeliveryVerificationService {
     }
 
 
+    const { data: tripData, error: rpcErr } = await this.orderRepository.executeRpc('complete_trip_tx', {
+      p_order_id: orderId,
+      p_otp_id: otpRecord.id,
+      p_release_tx_hash: null,
+    });
+
+    if (rpcErr) {
+      logger.error('complete_trip_tx RPC failed:', rpcErr.message);
+      throw new DomainError(500, { error: 'Failed to complete trip.', details: rpcErr.message });
+    }
+
+    const { data: verifiedOrder, error: verifyErr } = await this.orderRepository.findOrderById(orderId, 'status, escrow_status, escrow_release_attempts');
+
+    if (verifyErr || !verifiedOrder) {
+      logger.error(`[verify-delivery] Failed to verify order status after RPC for order ${orderId}`);
+      throw new DomainError(500, { error: 'Failed to verify order status after payment release.' });
+    }
+
+    if (verifiedOrder.status !== 'payment_released') {
+      logger.warn(`[verify-delivery] Order ${orderId} status changed to "${verifiedOrder.status}" — payment was not released.`);
+      throw new DomainError(409, {
+        error: 'Order status changed during processing. Payment was not released.',
+      });
+    }
+
+    await this.completeDeliveryOtp({ otpRecordId: otpRecord.id, orderId });
+
     let releaseTxHash = null;
     let escrowAlreadyReleased = false;
     if (order.escrow_status === 'funded' || order.escrow_status === 'release_failed') {
@@ -202,33 +229,6 @@ export class DeliveryVerificationService {
     } else {
       logger.info(`[escrow] Escrow not funded (status: ${order.escrow_status}) — skipping on-chain release.`);
     }
-
-    const { data: tripData, error: rpcErr } = await this.orderRepository.executeRpc('complete_trip_tx', {
-      p_order_id: orderId,
-      p_otp_id: otpRecord.id,
-      p_release_tx_hash: releaseTxHash,
-    });
-
-    if (rpcErr) {
-      logger.error('complete_trip_tx RPC failed:', rpcErr.message);
-      throw new DomainError(500, { error: 'Failed to complete trip and release payment.', details: rpcErr.message });
-    }
-
-    const { data: verifiedOrder, error: verifyErr } = await this.orderRepository.findOrderById(orderId, 'status, escrow_status, escrow_release_attempts');
-
-    if (verifyErr || !verifiedOrder) {
-      logger.error(`[verify-delivery] Failed to verify order status after RPC for order ${orderId}`);
-      throw new DomainError(500, { error: 'Failed to verify order status after payment release.' });
-    }
-
-    if (verifiedOrder.status !== 'payment_released') {
-      logger.warn(`[verify-delivery] Order ${orderId} status changed to "${verifiedOrder.status}" — payment was not released.`);
-      throw new DomainError(409, {
-        error: 'Order status changed during processing. Payment was not released.',
-      });
-    }
-
-    await this.completeDeliveryOtp({ otpRecordId: otpRecord.id, orderId });
 
     let escrowUpdateFailed = false;
     if (releaseTxHash || escrowAlreadyReleased) {

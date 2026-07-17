@@ -102,7 +102,7 @@ export async function reconcilePendingEscrowReleases() {
             updated_at: releasedAt,
           })
           .eq('id', order.id)
-          .eq('escrow_status', 'release_failed')
+      .in('escrow_status', ['release_failed', 'funded'])
           .is('reconciled_by', null);
 
         if (updateError) {
