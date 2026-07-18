@@ -25,16 +25,8 @@ from app.models.mid_trip_reoptimiser import find_mid_trip_loads
 from app.models.base import model_exists
 from app.models.demand_forecast import MODEL_NAME as DEMAND_MODEL_NAME
 from app.models.price_prediction import MODEL_NAME as PRICE_MODEL_NAME
-from fastapi import FastAPI
-from routes import federated_routes  # Add this
-import os
+from routes import federated_routes
 
-app = FastAPI(title="Truxify ML Engine")
-
-# Add federated routes
-app.include_router(federated_routes.router)
-
-# Rest of your existing code...
 # ============================================================================
 # 🆕 REAL-TIME TRAFFIC ETA IMPORTS
 # ============================================================================
@@ -75,6 +67,9 @@ app = FastAPI(
 )
 
 
+
+# Add federated routes
+app.include_router(federated_routes.router)
 
 # CORS: restrict to known origins — no wildcard "*" to prevent unauthorized cross-origin access
 app.add_middleware(
