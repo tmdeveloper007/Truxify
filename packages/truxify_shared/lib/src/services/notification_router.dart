@@ -10,6 +10,7 @@ enum NotificationTarget {
   earnings,
   loadDetail,
   notifications,
+  documents,
   unknown,
 }
 
@@ -48,6 +49,8 @@ class NotificationRouter {
       case 'system':
       case 'document':
         return NotificationTarget.notifications;
+      case 'document_expiry':
+        return NotificationTarget.documents;
       default:
         return NotificationTarget.unknown;
     }
