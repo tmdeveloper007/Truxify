@@ -197,7 +197,7 @@ router.get('/search', authenticate, userLimiter, async (req, res) => {
     drop_lat, drop_lng,
     weight_tonnes,
     is_fragile, is_stackable,
-    truck_type, min_capacity, max_capacity, material_type
+    truck_type, min_capacity, max_capacity
   } = req.query;
 
   if (pickup_lat == null || pickup_lng == null || drop_lat == null || drop_lng == null || weight_tonnes == null) {
@@ -398,13 +398,6 @@ router.get('/search', authenticate, userLimiter, async (req, res) => {
         const truckNameLower = (truck.truck || '').toLowerCase();
         const typeLower = truck_type.toLowerCase();
         if (!truckNameLower.includes(typeLower)) {
-          return false;
-        }
-      }
-      if (material_type && material_type !== '') {
-        const truckNameLower = (truck.truck || '').toLowerCase();
-        const matLower = material_type.toLowerCase();
-        if (!truckNameLower.includes(matLower)) {
           return false;
         }
       }
