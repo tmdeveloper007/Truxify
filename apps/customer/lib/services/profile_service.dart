@@ -90,7 +90,11 @@ class ProfileService {
     // Unregister this device's FCM token first so a signed-out device stops
     // receiving push notifications intended for the next user of a shared
     // device, then sign out from local clients.
-    await FcmService.unregisterToken();
+    try {
+      await FcmService.unregisterToken();
+    } catch (e) {
+      developer.log('FCM token unregister failed during logout: $e');
+    }
 
     await Future.wait([
       FirebaseAuth.instance.signOut(),
