@@ -197,7 +197,7 @@ router.get('/search', authenticate, userLimiter, async (req, res) => {
     drop_lat, drop_lng,
     weight_tonnes,
     is_fragile, is_stackable,
-    truck_type, min_capacity, max_capacity
+    truck_type, min_capacity, max_capacity, material_type
   } = req.query;
 
   if (pickup_lat == null || pickup_lng == null || drop_lat == null || drop_lng == null || weight_tonnes == null) {
