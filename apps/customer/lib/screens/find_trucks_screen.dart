@@ -477,6 +477,7 @@ class _FindTrucksScreenState extends State<FindTrucksScreen> {
       return;
     }
 
+    if (!mounted) return;
     setState(() {
       if (isPickup) {
         _pickupController.text = result.address;
