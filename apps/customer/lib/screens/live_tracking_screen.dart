@@ -901,7 +901,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                     ),
                   ],
                 );
-              },
             ),
           ),
           Positioned(
