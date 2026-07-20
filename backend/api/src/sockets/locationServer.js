@@ -4,6 +4,8 @@ import logger from "../middleware/logger.js";
 import { GpsLog } from "../models/GpsLog.js";
 import { supabase } from "../config/db.js";
 
+let io = null;
+
 /**
  * Initializes the Truxify Live Location WebSocket server on top of an existing
  * Node.js HTTP server. Should be called once during startup after MongoDB
@@ -321,5 +323,12 @@ async function verifyBookingOwnership(customerId, bookingId) {
   } catch (err) {
     logger.error({ err }, '[WS] isCustomerAuthorized error');
     return false;
+  }
+}
+
+export async function closeLocationServer() {
+  if (io) {
+    io.close();
+    io = null;
   }
 }
