@@ -131,8 +131,8 @@ export class OrderLifecycleService {
       order_display_id: orderDisplayId,
       customer_id: customerId,
       customer_name: customerName || 'Customer',
-      route_label: `${pickup_address.split(',')[0]} → ${drop_address.split(',')[0]}`,
-      route_subtitle: `${weight_tonnes} tonnes • ${goods_type}`,
+      route_label: `${pickup_address.split(',')[0]} -> ${drop_address.split(',')[0]}`,
+      route_subtitle: `${weight_tonnes} tonnes * ${goods_type}`,
       pickup_address, pickup_lat, pickup_lng,
       drop_address, drop_lat, drop_lng,
       goods_type,
@@ -503,7 +503,7 @@ export class OrderLifecycleService {
       drop_address,
       drop_lat: Number(drop_lat),
       drop_lng: Number(drop_lng),
-      route_label: `${(order.pickup_address || '').split(',')[0]} → ${drop_address.split(',')[0]}`,
+      route_label: `${(order.pickup_address || '').split(',')[0]} -> ${drop_address.split(',')[0]}`,
       freight_value: pricing.totalAmount,
       fuel_cost: pricing.fuelCost,
       toll_cost: pricing.tollEstimate,
@@ -526,10 +526,10 @@ export class OrderLifecycleService {
     return {
       message: 'Drop location updated successfully.',
       pricing: {
-        base_freight: pricing.baseFreight,
-        toll_estimate: pricing.tollEstimate,
-        platform_fee: pricing.platformFee,
-        total_amount: pricing.totalAmount,
+        base_freight: updatedOrder.base_freight ?? pricing.baseFreight,
+        toll_estimate: updatedOrder.toll_estimate ?? pricing.tollEstimate,
+        platform_fee: updatedOrder.platform_fee ?? pricing.platformFee,
+        total_amount: updatedOrder.total_amount ?? pricing.totalAmount,
       },
       order: updatedOrder,
     };
@@ -683,7 +683,7 @@ export class OrderLifecycleService {
           };
         }
       } else if (order.escrow_booking_id) {
-        logger.info(`[escrow] Escrow not funded (status: ${order.escrow_status}) — skipping on-chain refund.`);
+        logger.info(`[escrow] Escrow not funded (status: ${order.escrow_status}) - skipping on-chain refund.`);
       }
 
       const updatePayload = {
@@ -800,7 +800,7 @@ export class OrderLifecycleService {
         logger.error(`[OrderLifecycle] Failed to emit rating:submitted event: ${err.message}`);
       }
     } else {
-      logger.warn(`[reputation] Driver ${order.driver_id} has no polygon_wallet_address — skipping on-chain update.`);
+      logger.warn(`[reputation] Driver ${order.driver_id} has no polygon_wallet_address - skipping on-chain update.`);
     }
 
     return {
