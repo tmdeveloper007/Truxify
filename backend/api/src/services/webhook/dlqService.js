@@ -17,6 +17,7 @@ export const dlqService = {
           event_type: eventType,
           payload,
           error_message: String(error.message || error).slice(0, 1000),
+          retry_count: 0,
           next_retry_at: new Date(Date.now() + RETRY_BACKOFF[0] * 60000).toISOString(),
         });
 
@@ -79,7 +80,7 @@ export const dlqService = {
         } catch (procErr) {
           logger.error(`[DLQ] Retry failed for event ${event.id}: ${procErr.message}`);
 
-          const newRetryCount = event.retry_count + 1;
+          const newRetryCount = (event.retry_count ?? 0) + 1;
           const nextBackoffMin = RETRY_BACKOFF[newRetryCount] || -1;
 
           if (nextBackoffMin === -1) {
