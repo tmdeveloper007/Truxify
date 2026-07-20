@@ -5,6 +5,15 @@ import { supabase } from '../../config/db.js';
 
 class ZKPService {
   constructor() {
+    if (!process.env.POLYGON_RPC_URL || !process.env.PRIVATE_KEY || !process.env.KYC_VERIFIER_CONTRACT) {
+      logger.warn('ZKPService disabled: POLYGON_RPC_URL, PRIVATE_KEY, or KYC_VERIFIER_CONTRACT not set.');
+      this.provider = null;
+      this.wallet = null;
+      this.contract = null;
+      this.contractAddress = null;
+      this.contractABI = [];
+      return;
+    }
     this.provider = new ethers.JsonRpcProvider(process.env.POLYGON_RPC_URL);
     this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
     this.contractAddress = process.env.KYC_VERIFIER_CONTRACT;
@@ -69,6 +78,7 @@ class ZKPService {
 
   async verifyKYCOnChain(userId, proof) {
     try {
+      if (!this.contract) throw new Error('ZKPService not configured: missing environment variables');
       // Get user address
       const userData = await this.getUserAddress(userId);
       if (!userData) {
@@ -140,6 +150,7 @@ class ZKPService {
 
   async isVerified(userId) {
     try {
+      if (!this.contract) return false;
       const userData = await this.getUserAddress(userId);
       if (!userData) return false;
       
@@ -153,6 +164,7 @@ class ZKPService {
 
   async getDocumentHash(userId) {
     try {
+      if (!this.contract) return null;
       const userData = await this.getUserAddress(userId);
       if (!userData) return null;
       
