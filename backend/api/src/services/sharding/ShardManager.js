@@ -6,6 +6,9 @@ class ShardManager {
   constructor() {
     this.shards = new Map();
     this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+    this.redis.quit = this.redis.quit.bind(this.redis);
+    process.on('SIGINT', () => this.closeAllConnections().catch(() => {}));
+    process.on('SIGTERM', () => this.closeAllConnections().catch(() => {}));
     this.initializeShards();
   }
 
