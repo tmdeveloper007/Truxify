@@ -48,6 +48,17 @@ class TripService {
     return value.endsWith('/') ? value.substring(0, value.length - 1) : value;
   }
 
+  static int _positiveInt(dynamic value, int fallback) {
+    if (value == null) return fallback;
+    if (value is int && value > 0) return value;
+    if (value is num && value.isFinite && value > 0) return value.toInt();
+    if (value is String) {
+      final parsed = int.tryParse(value);
+      if (parsed != null && parsed > 0) return parsed;
+    }
+    return fallback;
+  }
+
   String _encodePathSegment(String value) => Uri.encodeComponent(value);
 
   Future<void> verifyTripOwnership(String tripDisplayId) async {
@@ -108,8 +119,8 @@ class TripService {
       if (trips is! List) {
         throw StateError('Unexpected trip history trips type');
       }
-      final responsePage = body['page'] as int? ?? page;
-      final totalPages = body['totalPages'] as int? ?? responsePage;
+      final responsePage = _positiveInt(body['page'], page);
+      final totalPages = _positiveInt(body['totalPages'], responsePage);
       final hasMore = responsePage < totalPages;
       return {
         'trips': List<Map<String, dynamic>>.from(trips),
