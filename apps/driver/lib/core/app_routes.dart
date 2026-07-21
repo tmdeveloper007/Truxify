@@ -10,4 +10,5 @@ class AppRoutes {
   static const myTruck = '/my-truck';
   static const earnings = '/earnings';
   static const tripDetail = '/trip-detail';
+  static const weightCalculator = '/weight-calculator';
 }

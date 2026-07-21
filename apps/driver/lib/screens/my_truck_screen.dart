@@ -458,6 +458,11 @@ class _MyTruckScreenState extends State<MyTruckScreen> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.calculate_outlined, color: TruxifyColors.accent),
+            tooltip: 'Weight Calculator',
+            onPressed: () => Navigator.pushNamed(context, '/weight-calculator'),
+          ),
+          IconButton(
             icon: const Icon(Icons.build_rounded, color: TruxifyColors.accent),
             tooltip: 'Report Issue',
             onPressed: () => _showReportIssueSheet(context),
