@@ -35,7 +35,7 @@ const isoDateStringSchema = z
     message: 'Must be a valid ISO date string',
   });
 
-const uuidSchema = z.string().uuid("Invalid ID format");
+export const uuidSchema = z.string().uuid("Invalid ID format");
 const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/; // HH:MM or HH:MM:SS
 const upiRegex = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
 
@@ -58,6 +58,11 @@ export const createOrderSchema = z.object({
   special_requirements: z.string().max(500).optional().nullable(),
   payment_method_id: z.string().optional(),
   upi_id: z.string().regex(upiRegex, "Invalid UPI ID format").optional().or(z.literal('')).nullable(),
+  waypoints: z.array(z.object({
+    address: z.string().min(5, "Waypoint address is too short").max(255, "Waypoint address is too long"),
+    lat: latitudeSchema,
+    lng: longitudeSchema,
+  })).optional(),
   // Server-computed fields — reject any client-supplied value to prevent price manipulation.
   base_freight: z.never().optional(),
   toll_estimate: z.never().optional(),
