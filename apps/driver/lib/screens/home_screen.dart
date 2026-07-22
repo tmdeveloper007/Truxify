@@ -22,6 +22,7 @@ import '../services/trip_service.dart';
 import '../services/location_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/dashboard_shimmer.dart';
 import '../widgets/earnings_shimmer.dart';
 import '../widgets/map_markers.dart';
 import 'destination_picker_screen.dart';
@@ -995,14 +996,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return Container(
         color: Theme.of(context).colorScheme.surfaceContainerLowest,
         child: const Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Fetching your location...'),
-            ],
-          ),
+          child: MapLoadingSkeleton(),
         ),
       );
     }
@@ -1232,11 +1226,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           _isRefreshingLocation || _isLoadingLocation
                               ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 1.5,
-                                    color: TruxifyColors.accent,
+                                  width: 24,
+                                  height: 24,
+                                  child: Padding(
+                                    padding: EdgeInsets.all(4.0),
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.0,
+                                      color: TruxifyColors.accent,
+                                    ),
                                   ),
                                 )
                               : Icon(
