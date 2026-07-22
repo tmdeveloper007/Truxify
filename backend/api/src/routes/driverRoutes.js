@@ -1,3 +1,131 @@
+/**
+ * @openapi
+ * components:
+ *   schemas:
+ *     DriverStats:
+ *       type: object
+ *       properties:
+ *         stats:
+ *           type: object
+ *           properties:
+ *             rating:
+ *               type: number
+ *             total_trips:
+ *               type: integer
+ *             completion_rate:
+ *               type: number
+ *             is_online:
+ *               type: boolean
+ *             wallet_confirmed:
+ *               type: number
+ *             wallet_pending:
+ *               type: number
+ *             wallet_total:
+ *               type: number
+ *         truck:
+ *           type: object
+ *           nullable: true
+ *     DriverOnlineRequest:
+ *       type: object
+ *       required:
+ *         - is_online
+ *       properties:
+ *         is_online:
+ *           type: boolean
+ *     DriverOnlineResponse:
+ *       type: object
+ *       properties:
+ *         message:
+ *           type: string
+ *         is_online:
+ *           type: boolean
+ *     WalletHistoryResponse:
+ *       type: object
+ *       properties:
+ *         page:
+ *           type: integer
+ *         limit:
+ *           type: integer
+ *         total:
+ *           type: integer
+ *         totalPages:
+ *           type: integer
+ *         transactions:
+ *           type: array
+ *           items:
+ *             type: object
+ *     EarningsSummaryResponse:
+ *       type: array
+ *       items:
+ *         type: object
+ *         properties:
+ *           day_date:
+ *             type: string
+ *             format: date
+ *           amount:
+ *             type: number
+ *           trip_count:
+ *             type: integer
+ *           hours_driven:
+ *             type: number
+ *     DriverTripsResponse:
+ *       type: object
+ *       properties:
+ *         page:
+ *           type: integer
+ *         limit:
+ *           type: integer
+ *         total:
+ *           type: integer
+ *         totalPages:
+ *           type: integer
+ *         trips:
+ *           type: array
+ *           items:
+ *             type: object
+ *     BidListResponse:
+ *       type: object
+ *       properties:
+ *         page:
+ *           type: integer
+ *         limit:
+ *           type: integer
+ *         total:
+ *           type: integer
+ *         totalPages:
+ *           type: integer
+ *         bids:
+ *           type: array
+ *           items:
+ *             type: object
+ *     WithdrawRequest:
+ *       type: object
+ *       required:
+ *         - amount
+ *       properties:
+ *         amount:
+ *           type: number
+ *           description: Amount in paisa
+ *     WithdrawResponse:
+ *       type: object
+ *       properties:
+ *         message:
+ *           type: string
+ *     DriverReputationResponse:
+ *       type: object
+ *       properties:
+ *         driverId:
+ *           type: string
+ *         walletAddress:
+ *           type: string
+ *           nullable: true
+ *         onChainScore:
+ *           type: number
+ *           nullable: true
+ *         supabaseRating:
+ *           type: number
+ */
+
 import express from 'express';
 import { supabase, redisClient, createUserClient } from '../config/db.js';
 import { getDriverReputation } from '../services/reputation.js';
@@ -34,6 +162,25 @@ function parseIntegerQuery(value) {
 // ============================================================================
 // 1. GET DRIVER STATS (DRIVER)
 // ============================================================================
+/**
+ * @openapi
+ * /api/driver/stats:
+ *   get:
+ *     tags: [Driver]
+ *     summary: Get driver statistics
+ *     description: Returns driver's rating, trip counts, wallet balances, and assigned truck details. Driver role required.
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Driver statistics
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/DriverStats'
+ *       404:
+ *         description: Driver profile not initialized
+ */
 router.get('/stats', authenticate, userLimiter, requirePolicy('driver:view-stats'), async (req, res) => {
   try {
     const { data: details, error } = await supabase
@@ -75,6 +222,31 @@ router.get('/stats', authenticate, userLimiter, requirePolicy('driver:view-stats
 // ============================================================================
 // 2. TOGGLE ONLINE / OFFLINE STATUS (DRIVER)
 // ============================================================================
+/**
+ * @openapi
+ * /api/driver/online:
+ *   put:
+ *     tags: [Driver]
+ *     summary: Toggle driver online/offline status
+ *     description: Updates the driver's availability status for receiving load offers.
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/DriverOnlineRequest'
+ *     responses:
+ *       200:
+ *         description: Status updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/DriverOnlineResponse'
+ *       400:
+ *         description: Validation error
+ */
 router.put('/online', authenticate, userLimiter, requirePolicy('driver:toggle-online'), validateBody(driverOnlineSchema), async (req, res) => {
   const { is_online } = req.body;
 
@@ -107,6 +279,39 @@ router.put('/online', authenticate, userLimiter, requirePolicy('driver:toggle-on
 // ============================================================================
 // 3. FETCH WALLET TRANSACTION HISTORY (DRIVER)
 // ============================================================================
+/**
+ * @openapi
+ * /api/driver/wallet/history:
+ *   get:
+ *     tags: [Driver]
+ *     summary: Get wallet transaction history
+ *     description: Returns paginated wallet transaction history for the authenticated driver.
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *           maximum: 100
+ *         description: Items per page
+ *     responses:
+ *       200:
+ *         description: Transaction history
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/WalletHistoryResponse'
+ *       400:
+ *         description: Invalid pagination parameters
+ */
 router.get('/wallet/history', authenticate, userLimiter, requirePolicy('driver:view-wallet'), async (req, res) => {
   try {
     const page = parseIntegerQuery(req.query.page) ?? 1;
@@ -166,6 +371,34 @@ router.get('/wallet/history', authenticate, userLimiter, requirePolicy('driver:v
 // ============================================================================
 // 4. FETCH Aggregated daily/weekly earnings summaries for chart (DRIVER)
 // ============================================================================
+/**
+ * @openapi
+ * /api/driver/earnings/summary:
+ *   get:
+ *     tags: [Driver]
+ *     summary: Get earnings summary for charts
+ *     description: Returns aggregated daily earnings data for the specified number of days (max 365).
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: days
+ *         schema:
+ *           type: integer
+ *           default: 30
+ *           minimum: 1
+ *           maximum: 365
+ *         description: Number of days to include
+ *     responses:
+ *       200:
+ *         description: Earnings data array
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/EarningsSummaryResponse'
+ *       400:
+ *         description: Invalid days parameter
+ */
 router.get('/earnings/summary', authenticate, userLimiter, requirePolicy('driver:view-earnings'), async (req, res) => {
   const daysParam = req.query.days ?? '30';
   const limitDays = typeof daysParam === 'string' ? Number(daysParam) : NaN;
@@ -202,6 +435,40 @@ router.get('/earnings/summary', authenticate, userLimiter, requirePolicy('driver
 // ============================================================================
 // 5. FETCH DRIVER TRIPS (DRIVER)
 // ============================================================================
+/**
+ * @openapi
+ * /api/driver/trips:
+ *   get:
+ *     tags: [Driver]
+ *     summary: List driver trips
+ *     description: Returns paginated trips for the authenticated driver, optionally filtered by status.
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *         description: Filter by trip status
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *           maximum: 100
+ *     responses:
+ *       200:
+ *         description: Paginated trip list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/DriverTripsResponse'
+ */
 router.get('/trips', authenticate, userLimiter, requirePolicy('driver:view-trips'), async (req, res) => {
   const { status } = req.query;
   const rawPage = req.query.page;
@@ -249,6 +516,34 @@ router.get('/trips', authenticate, userLimiter, requirePolicy('driver:view-trips
 // ============================================================================
 // 6. FETCH TRIP ITEMS (DRIVER)
 // ============================================================================
+/**
+ * @openapi
+ * /api/driver/trips/{tripDisplayId}/items:
+ *   get:
+ *     tags: [Driver]
+ *     summary: Get trip items
+ *     description: Returns all items for a specific trip. Driver must own the trip.
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: tripDisplayId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Trip display ID
+ *     responses:
+ *       200:
+ *         description: Array of trip items
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *       403:
+ *         description: Access denied
+ */
 router.get('/trips/:tripDisplayId/items', authenticate, userLimiter, requirePolicy('driver:view-trip-items'), async (req, res) => {
   const { tripDisplayId } = req.params;
 
@@ -269,6 +564,28 @@ router.get('/trips/:tripDisplayId/items', authenticate, userLimiter, requirePoli
 // ============================================================================
 // 7. FETCH TRIP STOPS (DRIVER)
 // ============================================================================
+/**
+ * @openapi
+ * /api/driver/trips/{tripDisplayId}/stops:
+ *   get:
+ *     tags: [Driver]
+ *     summary: Get trip stops
+ *     description: Returns all stops for a specific trip, ordered by sort_order. Driver must own the trip.
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: tripDisplayId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Trip display ID
+ *     responses:
+ *       200:
+ *         description: Array of trip stops
+ *       403:
+ *         description: Access denied
+ */
 router.get('/trips/:tripDisplayId/stops', authenticate, userLimiter, requirePolicy('driver:view-trip-stops'), async (req, res) => {
   const { tripDisplayId } = req.params;
 
@@ -289,6 +606,28 @@ router.get('/trips/:tripDisplayId/stops', authenticate, userLimiter, requirePoli
 // ============================================================================
 // 8. FETCH ROUTE MAP POINTS (DRIVER)
 // ============================================================================
+/**
+ * @openapi
+ * /api/driver/trips/{tripDisplayId}/route-points:
+ *   get:
+ *     tags: [Driver]
+ *     summary: Get route map points
+ *     description: Returns route geometry points for a trip's map display. Driver must own the trip.
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: tripDisplayId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Trip display ID
+ *     responses:
+ *       200:
+ *         description: Array of route map points
+ *       403:
+ *         description: Access denied
+ */
 router.get('/trips/:tripDisplayId/route-points', authenticate, userLimiter, requirePolicy('driver:view-route-points'), async (req, res) => {
   const { tripDisplayId } = req.params;
 
@@ -370,6 +709,35 @@ router.patch(
 // ============================================================================
 // 9. FETCH DRIVER BIDS (DRIVER)
 // ============================================================================
+/**
+ * @openapi
+ * /api/driver/bids:
+ *   get:
+ *     tags: [Driver]
+ *     summary: List driver's bids
+ *     description: Returns paginated bid history for the authenticated driver.
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *           maximum: 100
+ *     responses:
+ *       200:
+ *         description: Paginated bid list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/BidListResponse'
+ */
 router.get('/bids', authenticate, userLimiter, requirePolicy('driver:view-bids'), async (req, res) => {
   try {
     const pageParam = req.query.page ?? '1';
@@ -412,6 +780,31 @@ router.get('/bids', authenticate, userLimiter, requirePolicy('driver:view-bids')
 // ============================================================================
 // 10. WITHDRAW FUNDS FROM WALLET (DRIVER)
 // ============================================================================
+/**
+ * @openapi
+ * /api/driver/wallet/withdraw:
+ *   post:
+ *     tags: [Driver]
+ *     summary: Withdraw funds from wallet
+ *     description: Initiates a withdrawal from the driver's confirmed wallet balance. Amount is in paisa. Uses Supabase RPC for atomic transaction.
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/WithdrawRequest'
+ *     responses:
+ *       200:
+ *         description: Withdrawal initiated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/WithdrawResponse'
+ *       400:
+ *         description: Insufficient balance or validation error
+ */
 router.post('/wallet/withdraw', authenticate, userLimiter, requirePolicy('driver:withdraw'), validateBody(withdrawSchema), async (req, res) => {
   const { amount } = req.body; // in paisa
 
@@ -513,7 +906,36 @@ router.post(
 // ============================================================================
 // 11. GET DRIVER REPUTATION (DRIVER)
 // ============================================================================
-router.get('/:driverId/reputation', authenticate, userLimiter, requirePolicy('driver:view-reputation'), validateParams(z.object({ driverId: uuidSchema })), async (req, res) => {
+/**
+ * @openapi
+ * /api/driver/{driverId}/reputation:
+ *   get:
+ *     tags: [Driver]
+ *     summary: Get driver reputation
+ *     description: Returns driver's on-chain reputation score from Polygon and off-chain rating from Supabase. Results are cached in Redis for 30 seconds.
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: driverId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Driver's UUID
+ *     responses:
+ *       200:
+ *         description: Driver reputation data
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/DriverReputationResponse'
+ *       403:
+ *         description: Forbidden - can only view own reputation
+ *       404:
+ *         description: Driver not found
+ */
+router.get('/:driverId/reputation', authenticate, userLimiter, requirePolicy('driver:view-reputation'), validateParams(uuidParamSchema), async (req, res) => {
   const { driverId } = req.params;
 
   if (driverId !== req.user.id) {
@@ -587,73 +1009,17 @@ router.get('/:driverId/reputation', authenticate, userLimiter, requirePolicy('dr
   }
 });
 
-// PUT /api/drivers/hos/status - Update Hours of Service status
-const hosStatusSchema = z.object({
-  status: z.enum(['off_duty', 'on_duty', 'driving', 'resting'])
-});
 
-router.put('/hos/status', authenticate, userLimiter, requireRole(['driver']), validateBody(hosStatusSchema), async (req, res) => {
+router.get('/weigh-stations/bypass-status', requireAuth, requireDriver, async (req, res) => {
   try {
-    const { status } = req.body;
-    
-    // fetch current state
-    const { data: driver, error: fetchErr } = await supabase
-      .from('driver_details')
-      .select('hos_status, shift_start_time, accumulated_driving_minutes, accumulated_on_duty_minutes, last_status_update_time')
-      .eq('driver_id', req.user.id)
-      .maybeSingle();
-
-    if (fetchErr) return res.status(500).json({ error: 'Failed to fetch HoS state' });
-    if (!driver) return res.status(404).json({ error: 'Driver not found' });
-
-    const now = new Date();
-    let accumulatedDriving = driver.accumulated_driving_minutes || 0;
-    let accumulatedOnDuty = driver.accumulated_on_duty_minutes || 0;
-    let shiftStartTime = driver.shift_start_time;
-
-    if (driver.last_status_update_time) {
-      const lastUpdate = new Date(driver.last_status_update_time);
-      const diffMinutes = Math.floor((now - lastUpdate) / 60000);
-
-      // If off duty for > 10 hours, reset shift
-      if ((driver.hos_status === 'off_duty' || driver.hos_status === 'resting') && diffMinutes >= 600) {
-        accumulatedDriving = 0;
-        accumulatedOnDuty = 0;
-        shiftStartTime = now.toISOString();
-      } else {
-        if (driver.hos_status === 'driving') {
-          accumulatedDriving += diffMinutes;
-          accumulatedOnDuty += diffMinutes; // Driving counts as on-duty
-        } else if (driver.hos_status === 'on_duty') {
-          accumulatedOnDuty += diffMinutes;
-        }
-      }
-    } else {
-      shiftStartTime = now.toISOString();
-    }
-
-    const { error: updateErr } = await supabase
-      .from('driver_details')
-      .update({
-        hos_status: status,
-        accumulated_driving_minutes: accumulatedDriving,
-        accumulated_on_duty_minutes: accumulatedOnDuty,
-        last_status_update_time: now.toISOString(),
-        shift_start_time: shiftStartTime
-      })
-      .eq('driver_id', req.user.id);
-
-    if (updateErr) return res.status(500).json({ error: 'Failed to update HoS state' });
-
-    res.json({
-      hos_status: status,
-      accumulated_driving_minutes: accumulatedDriving,
-      accumulated_on_duty_minutes: accumulatedOnDuty,
-      shift_start_time: shiftStartTime
-    });
+    const driverId = req.user.id;
+    const lat = parseFloat(req.query.lat);
+    const lng = parseFloat(req.query.lng);
+    const status = await checkBypassEligibility(driverId, lat, lng);
+    return res.status(200).json(status);
   } catch (err) {
-    logger.error('Error updating HoS status:', err.message);
-    res.status(500).json({ error: 'Internal Server Error' });
+    logger.error(`[weigh-station] Error getting bypass status for driver ${req.user.id}: ${err.message}`);
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
