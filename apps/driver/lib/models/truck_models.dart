@@ -65,6 +65,7 @@ class TruckMaintenanceTicket {
     required this.description,
     required this.status,
     this.createdAt,
+    this.photoUrls = const [],
   });
 
   final String id;
@@ -74,18 +75,22 @@ class TruckMaintenanceTicket {
   final String description;
   final String status;
   final DateTime? createdAt;
+  final List<String> photoUrls;
 
   factory TruckMaintenanceTicket.fromJson(Map<String, dynamic> json) {
     return TruckMaintenanceTicket(
-      id: json['id'] as String,
-      truckId: json['truck_id'] as String,
-      driverId: json['driver_id'] as String,
+      id: json['id'].toString(),
+      truckId: json['truck_id'].toString(),
+      driverId: json['driver_id'].toString(),
       category: json['category'] as String,
       description: json['description'] as String,
       status: json['status'] as String,
       createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at'] as String)
           : null,
+      photoUrls: json['photo_urls'] != null
+          ? List<String>.from(json['photo_urls'] as List)
+          : const [],
     );
   }
 
@@ -98,6 +103,7 @@ class TruckMaintenanceTicket {
       'description': description,
       'status': status,
       if (createdAt != null) 'created_at': createdAt?.toIso8601String(),
+      'photo_urls': photoUrls,
     };
   }
 }
