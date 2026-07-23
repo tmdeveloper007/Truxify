@@ -305,6 +305,44 @@ class FraudDetectionService {
     return Array.from(connections);
   }
 
+  async getBatchUserConnections(userIds) {
+    if (userIds.length === 0) return {};
+
+    const { data: orders, error } = await supabase
+      .from('orders')
+      .select('customer_id, driver_id')
+      .or(userIds.map(id => `customer_id.eq.${id}`).join(',') + ',' + userIds.map(id => `driver_id.eq.${id}`).join(','));
+
+    if (error) {
+      logger.error('Failed to load batch user fraud connections:', error);
+      return {};
+    }
+
+    if (!Array.isArray(orders)) {
+      return {};
+    }
+
+    const connectionsMap = {};
+    for (const userId of userIds) {
+      connectionsMap[userId] = new Set();
+    }
+
+    orders.forEach(order => {
+      if (userIds.includes(order.customer_id) && order.driver_id) {
+        connectionsMap[order.customer_id].add(order.driver_id);
+      }
+      if (userIds.includes(order.driver_id) && order.customer_id) {
+        connectionsMap[order.driver_id].add(order.customer_id);
+      }
+    });
+
+    const result = {};
+    for (const userId of userIds) {
+      result[userId] = Array.from(connectionsMap[userId]);
+    }
+    return result;
+  }
+
   async buildGraph(userId, connections) {
     const graph = {
       nodes: [userId, ...connections],
@@ -320,9 +358,11 @@ class FraudDetectionService {
       });
     }
 
-    // Get second-degree connections
+    // Get second-degree connections in a single batch query
+    const secondDegreeMap = await this.getBatchUserConnections(connections);
+
     for (const conn of connections) {
-      const secondConn = await this.getUserConnections(conn);
+      const secondConn = secondDegreeMap[conn] || [];
       for (const sc of secondConn) {
         if (sc !== userId && !connections.includes(sc)) {
           graph.edges.push({
