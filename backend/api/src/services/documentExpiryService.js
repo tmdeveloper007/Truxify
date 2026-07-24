@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { supabase, redisClient } from '../config/db.js';
 import { sendPushNotification } from './notificationService.js';
 import logger from '../middleware/logger.js';
@@ -84,6 +85,7 @@ export async function processDocumentExpiryBatch() {
   let lockAcquired = false;
   let leaseExtender = null;
   const lockToken = `${process.pid}:${crypto.randomUUID()}`;
+  const lockToken = randomUUID();
 
   if (redisClient) {
     try {
@@ -98,6 +100,10 @@ export async function processDocumentExpiryBatch() {
           const extended = await redisClient.eval(EXTEND_LOCK_SCRIPT, 1, LOCK_KEY, lockToken, LOCK_TTL_SECONDS);
           if (!extended) {
             logger.warn('[document-expiry] Lock lease was not extended because ownership changed.');
+          // Only extend if we still own the lock
+          const current = await redisClient.get(LOCK_KEY);
+          if (current === lockToken) {
+            await redisClient.expire(LOCK_KEY, LOCK_TTL_SECONDS);
           }
         } catch (err) {
           logger.warn('[document-expiry] Failed to extend lock lease:', err.message);
@@ -196,6 +202,15 @@ export async function processDocumentExpiryBatch() {
     }
     if (lockAcquired && redisClient) {
       await redisClient.eval(RELEASE_LOCK_SCRIPT, 1, LOCK_KEY, lockToken).catch(() => {});
+      // Atomic compare-and-delete: only delete if the lock value matches our token
+      const script = `
+        if redis.call('GET', KEYS[1]) == ARGV[1] then
+          return redis.call('DEL', KEYS[1])
+        else
+          return 0
+        end
+      `;
+      await redisClient.eval(script, 1, LOCK_KEY, lockToken).catch(() => {});
     }
     if (!lockAcquired) {
       workerRunning = false;
