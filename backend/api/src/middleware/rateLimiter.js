@@ -3,8 +3,7 @@ import { RedisStore } from 'rate-limit-redis';
 import { redisClient } from '../config/db.js';
 import logger from './logger.js';
 
-function isRedisReady() {
-  function isSuspiciousForwardedHeader(header) {
+function isSuspiciousForwardedHeader(header) {
   if (!header || typeof header !== 'string') return false;
 
   // Excessively long headers may indicate spoofing attempts.
@@ -14,6 +13,10 @@ function isRedisReady() {
 
   // Reject obviously malformed values.
   return parts.some((ip) => ip.length === 0 || ip.includes('\n') || ip.includes('\r'));
+}
+
+function isRedisReady() {
+  return redisClient?.status === 'ready';
 }
 
 /**
@@ -90,32 +93,29 @@ class DeferredRedisStore {
  * into one rate-limit bucket.
  */
 export function safeIpKeyGenerator(req) {
-const forwarded = req.headers?.['x-forwarded-for'];
+  const forwarded = req.headers?.['x-forwarded-for'];
 
-if (isSuspiciousForwardedHeader(forwarded)) {
-  logger.warn(
-    {
-      requestId: req.requestId,
-      header: forwarded,
-      socketIp: req.socket?.remoteAddress,
-    },
-    'Suspicious X-Forwarded-For header detected'
-  );
-  let ip = req.ip || req.headers?.['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
-  if (typeof ip === 'string') {
-    if (ip.includes(',')) ip = ip.split(',')[0].trim();
-    ip = ip.replace(/^::ffff:/, '');
-    if (ip === '::1') ip = '127.0.0.1';
+  if (isSuspiciousForwardedHeader(forwarded)) {
+    logger.warn(
+      {
+        requestId: req.requestId,
+        header: forwarded,
+        socketIp: req.socket?.remoteAddress,
+      },
+      'Suspicious X-Forwarded-For header detected'
+    );
   }
+
+  let ip =
+    req.ip ||
+    req.headers?.['x-forwarded-for']?.split(',')[0]?.trim() ||
+    req.socket?.remoteAddress ||
+    req.connection?.remoteAddress ||
+    'unknown';
+  ip = ip.replace(/^::ffff:/, '');
+  if (ip === '::1') ip = '127.0.0.1';
   return ip;
 }
-
-let ip =
-  req.ip ||
-  req.socket?.remoteAddress ||
-  req.connection?.remoteAddress ||
-  'unknown';
-
 /**
  * Keys a limiter by the authenticated principal, falling back to the client IP
  * for unauthenticated requests. Used wherever req.user is available so that
@@ -186,8 +186,6 @@ export const healthLimiter = rateLimit({
 });
 
 export const authLimiter = rateLimit({
-  windowMs: authWindowMs,
-  max: authMaxRequests,
   windowMs: AUTH_WINDOW_MS,
   max: AUTH_MAX_REQUESTS,
   standardHeaders: true,
@@ -209,7 +207,7 @@ export const authLimiter = rateLimit({
 
     res.status(429).json({
       error: 'Rate limit exceeded',
-      retryAfter: Math.ceil(authWindowMs / 1000),
+      retryAfter: Math.ceil(AUTH_WINDOW_MS / 1000),
     });
   },
 });
