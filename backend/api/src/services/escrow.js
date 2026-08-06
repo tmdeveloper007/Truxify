@@ -206,6 +206,23 @@ export function getEscrowBookingId (orderDisplayId) {
 }
 
 /**
+ * Query the on-chain escrow booking by booking ID.
+ * @param {string} bookingId — bytes32 hex string (from getEscrowBookingId or order.escrow_booking_id)
+ * @returns {Promise<{customer: string, driver: string, amount: bigint, status: number, paid: boolean, started: boolean, createdAt: bigint}|null>}
+ */
+export async function getEscrowBooking (bookingId) {
+  if (!escrowContract) {
+    return null
+  }
+  try {
+    return await escrowContract.bookings(bookingId)
+  } catch (err) {
+    logger.error({ err, bookingId }, '[escrow] getEscrowBooking failed')
+    return null
+  }
+}
+
+/**
  * Build an unsigned deposit transaction for the customer's wallet to sign.
  * Called when a bid is accepted and the order moves to in_progress.
  *
