@@ -30,7 +30,10 @@ export async function verifyAuthToken(token) {
   let decoded;
   try {
     decoded = jwt.decode(token);
-  } catch (err) {}
+  } catch (err) {
+    // jwt.decode returns null for invalid tokens rather than throwing;
+    // the null is handled in the isSupabaseToken check below.
+  }
 
   const isSupabaseToken =
     decoded &&
