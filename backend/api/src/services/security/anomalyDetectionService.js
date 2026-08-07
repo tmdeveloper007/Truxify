@@ -53,6 +53,11 @@ class AnomalyDetectionService {
 
   async detectLargeWithdrawal(userId, walletAddress, transaction) {
     try {
+      // Only score withdrawals — deposits and credits must never be flagged as LARGE_WITHDRAWAL
+      if (transaction.type !== 'withdrawal') {
+        return null;
+      }
+
       const amount = parseFloat(transaction.amount || 0);
 
       if (amount < ANOMALY_THRESHOLDS.LARGE_WITHDRAWAL) {

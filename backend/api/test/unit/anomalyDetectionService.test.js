@@ -154,4 +154,19 @@ describe('AnomalyDetectionService', () => {
       expect(result).toBe(true);
     });
   });
+
+  describe('detectLargeWithdrawal', () => {
+    it('returns null for deposit transactions regardless of amount', async () => {
+      // A large deposit should never be flagged as LARGE_WITHDRAWAL
+      const transaction = { type: 'deposit', amount: '1000000' };
+      const result = await service.detectLargeWithdrawal('user-1', '0xWallet', transaction);
+      expect(result).toBeNull();
+    });
+
+    it('returns null for credit transactions regardless of amount', async () => {
+      const transaction = { type: 'credit', amount: '500000' };
+      const result = await service.detectLargeWithdrawal('user-1', '0xWallet', transaction);
+      expect(result).toBeNull();
+    });
+  });
 });
