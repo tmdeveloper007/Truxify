@@ -589,15 +589,15 @@ export class DeliveryVerificationService {
               );
             }
           }
-        } else if (order.escrow_status === "released") {
-        // 1. Database and Trip State Verification/Execution First
-        if (order.escrow_status === "released") {
-          // Release was confirmed in a previous attempt — reuse the persisted hash.
-          releaseTxHash = order.release_tx_hash || null;
-        } else {
-          logger.info(
-            `[escrow] Escrow not funded (status: ${order.escrow_status}) — skipping on-chain release.`,
-          );
+          if (order.escrow_status === "released") {
+            // Release was confirmed in a previous attempt — reuse the persisted hash.
+            releaseTxHash = order.release_tx_hash || null;
+          } else {
+            logger.info(
+              `[escrow] Escrow not funded (status: ${order.escrow_status}) — skipping on-chain release.`,
+            );
+          }
+
         }
 
         // 2. Execute Postgres RPC to complete the trip AFTER blockchain success

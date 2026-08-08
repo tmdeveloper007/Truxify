@@ -46,7 +46,6 @@ import supportRoutes from './routes/supportRoutes.js'
 import profileRoutes from './routes/profileRoutes.js'
 import shipmentRoutes from './routes/shipmentRoutes.js'
 import loadRoutes from './routes/loadRoutes.js'
-import iotRoutes from './routes/iotRoutes.js'
 import deadheadRoutes from './routes/deadheadRoutes.js'
 import truckRoutes from './routes/truckRoutes.js'
 import authRoutes from './routes/authRoutes.js'
@@ -495,7 +494,6 @@ app.use('/api/v1/admin/audit-logs', auditRoutes)
 app.use('/api/voice', voiceRoutes)
 app.use('/api/demand-heatmap', demandRoutes)
 app.use('/api/routes', routeRoutes)
-app.use('/api/iot', iotRoutes)
 
 // ============================================================================
 // WEBHOOK ROUTES

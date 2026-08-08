@@ -177,59 +177,8 @@ import {
   confirmEscrowRefund,
 } from '../core/container.js';
 import { getEscrowBookingId, resolveExpectedDepositAmount, paisaToMaticWei } from '../services/escrow.js';
-import { getEscrowBookingId, paisaToMaticWei } from '../services/escrow.js';
 import { getRouteEstimate, getRouteGeometry, buildStraightLineGeometry } from '../services/osrm.js';
 import { computeOrderPricing } from '../lib/pricing.js';
-
-const verifyDeliveryLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === 'test' ? 1000 : 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => req.user?.id || 'unknown',
-  store: createStore('rl:verify-delivery:'),
-  message: { error: 'Too many delivery verification attempts. Please try again later.' },
-});
-
-const predictDemandLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: process.env.NODE_ENV === 'test' ? 1000 : 10,
-  keyGenerator: (req) => req.user?.id || 'unauthenticated',
-  store: createStore('rl:predict-demand:'),
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many demand prediction requests. Please try again later.' },
-});
-
-const telemetryLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: process.env.NODE_ENV === 'test' ? 1000 : 30,
-  keyGenerator: userKeyGenerator,
-  store: createStore('rl:telemetry:'),
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many telemetry requests. Please try again later.' },
-});
-
-const resendOtpLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: process.env.NODE_ENV === 'test' ? 1000 : 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => req.user?.id || 'unknown',
-  store: createStore('rl:resend-otp:'),
-  message: { error: 'Too many OTP resend requests. Please try again later.' },
-});
-
-const changeDropLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: process.env.NODE_ENV === 'test' ? 1000 : 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => req.user?.id || 'unknown',
-  store: createStore('rl:change-drop:'),
-  message: { error: 'Too many drop change requests. Please try again later.' },
-});
 
 const router = express.Router();
 
@@ -246,12 +195,6 @@ router.post('/api/deliveries/:id/geofence-confirm', async (req, res) => {
   const geofenceRadiusM = geofence_radius_m !== undefined ? parseFloat(geofence_radius_m) : undefined;
   if (geofenceRadiusM !== undefined && (!Number.isFinite(geofenceRadiusM) || geofenceRadiusM <= 0)) {
     return res.status(400).json({ error: 'Invalid geofence_radius_m' });
-  let geofenceRadiusM;
-  if (geofence_radius_m !== undefined) {
-    geofenceRadiusM = parseFloat(geofence_radius_m);
-    if (!Number.isFinite(geofenceRadiusM) || geofenceRadiusM <= 0) {
-      return res.status(400).json({ error: 'Invalid geofence_radius_m' });
-    }
   }
 
   try {
@@ -270,11 +213,6 @@ router.post('/api/deliveries/:id/geofence-confirm', async (req, res) => {
       lat,
       lng,
     }, 'Driver geofence confirm attempt');
-
-      'id, driver_id, customer_id',
-    );
-    orderValidationService.assertOrderFound(order);
-    orderValidationService.assertDriverAssignment(order, req.user.id);
 
     logger.info(
       {
@@ -303,9 +241,8 @@ router.post('/api/deliveries/:id/geofence-confirm', async (req, res) => {
     logger.error('[geofence-confirm] Exception:', err.message);
     return res.status(500).json({ error: 'Internal Server Error' });
   }
-}
+  }
 );
-});
 
 // ============================================================================
 // 13c. DRIVER OTP CONFIRM ALIAS — POST /api/deliveries/:id/confirm-otp
@@ -507,8 +444,6 @@ router.put('/:id/change-drop', authenticate, userLimiter, changeDropLimiter, req
     // escrow_amount_wei is the authoritative payout figure (verified against
     // at deposit time and on release), so it must track total_amount using the
     // same canonical paisa→wei conversion the rest of the escrow pipeline uses.
-    const newAmountWei = paisaToMaticWei(pricing.totalAmount);
-    // at deposit time and read on release), so it must track total_amount.
     const newAmountWei = BigInt(paisaToMaticWei(pricing.totalAmount));
 
     const updates = {
