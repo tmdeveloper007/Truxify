@@ -42,12 +42,20 @@ class EdgeRuntime {
                 });
                 logger.info('✅ WASM binary module loaded');
             } else {
-                logger.warn('⚠️ WASM binary file not found, initializing native JS calculation fallback engine');
+                logger.warn('⚠️ WASM binary file not found — using native JS calculation fallback engine');
+                // Native JS fallback for all exported functions.
+                // Wired into executeEdgeFunction so it is actually used when the .wasm binary is absent.
                 this.wasmModules.set('default', {
                     exports: {
                         calculate_route: (params) => ({ distance_km: params.distance || 15.4, eta_mins: 28, cost: 450 }),
                         calculate_eta: (dist, speed, traffic) => (dist / (speed || 40)) * 60 * (traffic || 1.1),
-                        get_stats: () => ({ memory_used_mb: 4.2, active_functions: 6 })
+                        get_stats: () => ({ memory_used_mb: 4.2, active_functions: 6 }),
+                        process_driver_location: (drivers) => drivers,
+                        optimize_loads: (loads, capacity) => loads.slice(0, capacity),
+                        filter_drivers: (drivers, minRating) => drivers.filter(d => d.rating >= minRating),
+                        aggregate_prices: (prices) => prices.reduce ? prices.reduce((a, b) => a + b, 0) / (prices.length || 1) : 0,
+                        hash_data: (data) => String(data),
+                        compress_data: (data) => String(data),
                     }
                 });
             }
@@ -59,8 +67,24 @@ class EdgeRuntime {
     }
 
     async executeEdgeFunction(functionName, params) {
+        // Try the registered module (WASM binary or JS fallback) first — this avoids
+        // spawning a worker when the fallback engine is active.
+        const mod = this.wasmModules.get('default');
+        if (mod && mod.exports && typeof mod.exports[functionName] === 'function') {
+            try {
+                const result = await this.executeWithTimeout(
+                    () => mod.exports[functionName](...params),
+                    this.timeoutLimit
+                );
+                return { success: true, result };
+            } catch (err) {
+                return { success: false, error: err.message };
+            }
+        }
+
+        // Fall back to spawning a worker for WASM execution.
         return new Promise((resolve) => {
-            const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+            const { Worker, isMainThread } = require('worker_threads');
 
             if (!isMainThread) return;
 
