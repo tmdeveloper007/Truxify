@@ -8,6 +8,12 @@ class FreightSmartContract {
   final DateTime createdAt;
   final DateTime? settledAt;
 
+  // Fields required by the settlement flow preconditions
+  final String contractAddress;
+  final double escrowAmount;
+  final bool isGeofenceConfirmed;
+  final bool isPodUploaded;
+
   FreightSmartContract({
     required this.contractId,
     required this.loadId,
@@ -17,5 +23,9 @@ class FreightSmartContract {
     required this.walletAddress,
     required this.createdAt,
     this.settledAt,
+    required this.contractAddress,
+    required this.escrowAmount,
+    required this.isGeofenceConfirmed,
+    required this.isPodUploaded,
   });
 }
