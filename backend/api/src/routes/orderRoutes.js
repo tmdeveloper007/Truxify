@@ -231,31 +231,6 @@ router.post('/api/deliveries/:id/geofence-confirm', async (req, res) => {
       driverLng: lng,
       geofenceRadiusM,
     });
-
-      'id, driver_id, customer_id',
-    );
-    orderValidationService.assertOrderFound(order);
-    orderValidationService.assertDriverAssignment(order, req.user.id);
-
-    logger.info(
-      {
-        event: 'GEOFENCE_CONFIRM_ATTEMPT',
-        orderId: req.params.id,
-        driverId: req.user.id,
-        lat,
-        lng,
-      },
-      'Driver geofence confirm attempt',
-    );
-
-    const result = await orderLifecycleService.deliveryVerification.geofenceAutoConfirm({
-      orderId: req.params.id,
-      driverId: req.user.id,
-      driverLat: lat,
-      driverLng: lng,
-      geofenceRadiusM,
-    });
-
     return res.json(result);
   } catch (err) {
     if (err instanceof DomainError) {
@@ -265,7 +240,6 @@ router.post('/api/deliveries/:id/geofence-confirm', async (req, res) => {
     return res.status(500).json({ error: 'Internal Server Error' });
   }
 }
-);
 });
 
 // ============================================================================
@@ -512,8 +486,6 @@ router.put('/:id/change-drop', authenticate, userLimiter, changeDropLimiter, req
     // escrow_amount_wei is the authoritative payout figure (verified against
     // at deposit time and on release), so it must track total_amount using the
     // same canonical paisa→wei conversion the rest of the escrow pipeline uses.
-    const newAmountWei = paisaToMaticWei(pricing.totalAmount);
-    // at deposit time and read on release), so it must track total_amount.
     const newAmountWei = BigInt(paisaToMaticWei(pricing.totalAmount));
 
     const updates = {
@@ -1163,6 +1135,60 @@ router.post('/:id/pod', authenticate, requireRole(['driver']), podUploadLimiter,
   }
 });
 
+
+// GET /api/orders/my/active — active orders for the authenticated customer.
+router.get('/my/active', authenticate, userLimiter, requirePolicy('order:view-orders'), async (req, res) => {
+  try {
+    const orders = await orderLifecycleService.getActiveOrders(req.user.id);
+    return res.json({ success: true, data: orders, count: orders.length });
+  } catch (err) {
+    logger.error('Active orders fetch error:', err);
+    return res.status(500).json({ error: 'Failed to fetch active orders.' });
+  }
+});
+
+// GET /api/orders/my/history — order history for the authenticated customer.
+router.get('/my/history', authenticate, userLimiter, requirePolicy('order:view-history'), async (req, res) => {
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 20;
+  try {
+    const result = await orderLifecycleService.getOrderHistory(req.user.id, page, limit);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    logger.error('Order history fetch error:', err);
+    return res.status(500).json({ error: 'Failed to fetch order history.' });
+  }
+});
+
+// GET /api/orders/:id — order detail for the authenticated customer or assigned driver.
+router.get('/:id', authenticate, userLimiter, requirePolicy('order:view-orders'), validateParams(paramIdSchema), async (req, res) => {
+  try {
+    const { data: order, error } = await orderRepository.findOrderByIdOrDisplayId(req.params.id);
+    if (error || !order) {
+      return res.status(404).json({ error: 'Order not found.' });
+    }
+    if (order.customer_id !== req.user.id && order.driver_id !== req.user.id) {
+      return res.status(403).json({ error: 'Access denied.' });
+    }
+    return res.json({ success: true, data: order });
+  } catch (err) {
+    logger.error('Order detail fetch error:', err);
+    return res.status(500).json({ error: 'Failed to fetch order.' });
+  }
+});
+
+// GET /api/orders/:id/timeline — event timeline for an order.
+router.get('/:id/timeline', authenticate, userLimiter, requirePolicy('order:view-orders'), validateParams(paramIdSchema), async (req, res) => {
+  try {
+    const timeline = await orderLifecycleService.getOrderTimeline(req.params.id, req.user.id);
+    return res.json({ success: true, data: timeline });
+  } catch (err) {
+    const status = err?.status || err?.statusCode || 500;
+    const message = err?.message || 'Failed to fetch timeline.';
+    logger.error('Order timeline fetch error:', err);
+    return res.status(status).json({ error: message });
+  }
+});
 
 // GET /api/orders/history
 router.get('/history', authenticate, userLimiter, requirePolicy('order:view-history'), async (req, res) => {
