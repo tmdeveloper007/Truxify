@@ -23,6 +23,9 @@ class NotificationsScreen extends StatelessWidget {
           type: item.notifType,
           title: item.title,
           body: item.body,
+          orderId: item.orderId,
+          tripId: item.tripId,
+          bidId: item.bidId,
         );
         final route = shared.NotificationRouter.resolve(payload);
         shared.NotificationRouter.executeNavigation(context, route);
