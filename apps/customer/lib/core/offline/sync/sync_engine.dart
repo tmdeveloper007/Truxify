@@ -73,7 +73,16 @@ class SyncEngine {
       return 0;
     }
 
-    final resolved = resolver.resolve(eligible);
+    final resolution = resolver.resolveWithSuperseded(eligible);
+    final resolved = resolution.resolved;
+    final superseded = resolution.superseded;
+
+    // Delete superseded/deduplicated events so they are never re-processed.
+    if (superseded.isNotEmpty) {
+      await db.deleteEvents(superseded.map((e) => e.id).toList());
+      developer.log('[SyncEngine] Deleted ${superseded.length} superseded offline event(s) after conflict resolution.');
+    }
+
     if (resolved.isEmpty) {
       return 0;
     }
