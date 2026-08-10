@@ -47,18 +47,36 @@ class _MyDocumentsScreenState extends State<MyDocumentsScreen> {
 
     try {
       final user = _supabase.auth.currentUser;
-      final userId = user?.id ?? 'b1111111-1111-1111-1111-111111111111'; // Fallback to seed customer
+      if (user == null) {
+        if (!mounted) return;
+        setState(() {
+          _error = 'Please sign in to view your documents.';
+          _isLoading = false;
+        });
+        return;
+      }
+      final userId = user.id;
       
       final response = await _supabase
           .from('documents')
           .select()
           .eq('user_id', userId)
           .order('updated_at', ascending: false);
+
+      if (response is! List) {
+        throw StateError('Unexpected document response type');
+      }
+
+      final documents = response.map((item) {
+        if (item is Map<String, dynamic>) return item;
+        if (item is Map) return Map<String, dynamic>.from(item);
+        throw StateError('Unexpected document item type');
+      }).toList(growable: false);
           
       if (!mounted) return;
 
       setState(() {
-        _documents = List<Map<String, dynamic>>.from(response);
+        _documents = documents;
         _isLoading = false;
       });
     } catch (e) {
@@ -161,9 +179,9 @@ class _MyDocumentsScreenState extends State<MyDocumentsScreen> {
                   setSheetState(() {
                     progress += 0.15;
                     if (progress > 0.7) {
-                      statusText = 'Processing document...';
-                    } else if (progress > 0.4) {
                       statusText = 'Uploading to secure storage...';
+                    } else if (progress > 0.4) {
+                      statusText = 'Processing document...';
                     }
                   });
                 } else if (progress >= 0.8 && progress < 1.0) {
@@ -174,7 +192,16 @@ class _MyDocumentsScreenState extends State<MyDocumentsScreen> {
 
                   try {
                     final user = _supabase.auth.currentUser;
-                    final userId = user?.id ?? 'b1111111-1111-1111-1111-111111111111'; 
+                    if (user == null) {
+                      if (context.mounted) {
+                        setSheetState(() {
+                          isError = true;
+                          statusText = 'Upload Failed: Please sign in first.';
+                        });
+                      }
+                      return;
+                    }
+                    final userId = user.id;
                     final dbDocType = _mapUiToDbDocType(docType);
 
                     final existingDocs = await _supabase
@@ -226,7 +253,7 @@ class _MyDocumentsScreenState extends State<MyDocumentsScreen> {
                     width: 40,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: Colors.grey.withOpacity(0.3),
+                      color: Colors.grey.withValues(alpha: 0.3),
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -336,7 +363,7 @@ class _MyDocumentsScreenState extends State<MyDocumentsScreen> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.grey.withOpacity(0.3),
+                    color: Colors.grey.withValues(alpha: 0.3),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -509,7 +536,7 @@ class _MyDocumentsScreenState extends State<MyDocumentsScreen> {
                           width: 44,
                           height: 44,
                           decoration: BoxDecoration(
-                            color: isWarning ? Colors.red.withOpacity(0.1) : TruxifyColors.accentLight,
+                            color: isWarning ? Colors.red.withValues(alpha: 0.1) : TruxifyColors.accentLight,
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Icon(icon, color: isWarning ? Colors.red : TruxifyColors.accent, size: 22),
@@ -529,7 +556,7 @@ class _MyDocumentsScreenState extends State<MyDocumentsScreen> {
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: statusColor.withOpacity(0.15),
+                                  color: statusColor.withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text(

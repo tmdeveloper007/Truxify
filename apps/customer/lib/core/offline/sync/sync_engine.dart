@@ -1,13 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
-
+import 'dart:developer' as developer;
+import '../../config.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart'; // ✅ IMPORT SUPABASE
-
 import '../conflict/conflict_resolver.dart';
 import '../db/offline_event_db.dart';
 import '../models/trip_event.dart';
+
+enum SyncUploadOutcome {
+  success,
+  retryableFailure,
+  permanentFailure,
+}
 
 class SyncEngine {
   SyncEngine({
@@ -23,6 +29,8 @@ class SyncEngine {
   final ConflictResolver resolver;
   final int maxRetries;
   final int batchSize;
+
+  bool _isSyncing = false;
 
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   final Connectivity _connectivity = Connectivity();
@@ -42,25 +50,69 @@ class SyncEngine {
   }
 
   Future<int> syncPending() async {
+    if (_isSyncing) return 0;
+    _isSyncing = true;
+    try {
+      return await _syncPendingInternal();
+    } finally {
+      _isSyncing = false;
+    }
+  }
+
+  Future<int> _syncPendingInternal() async {
     final pending = await db.pendingEvents(limit: batchSize);
-    final eligible = pending.where((event) => event.retryCount < maxRetries).toList();
+    if (pending.isEmpty) {
+      return 0;
+    }
+
+    // Events that exhausted their retry budget must never be silently dropped
+    // forever: mark them rejected with a stored reason the UI can surface.
+    final exhausted = pending
+        .where((event) => event.retryCount >= maxRetries)
+        .toList();
+    if (exhausted.isNotEmpty) {
+      for (final event in exhausted) {
+        await db.markRejected(event.id, reason: 'retry budget exhausted');
+      }
+      developer.log(
+        '[SyncEngine] Rejected ${exhausted.length} offline event(s) that exhausted their retry budget.',
+      );
+    }
+
+    final eligible =
+        pending.where((event) => event.retryCount < maxRetries).toList();
     if (eligible.isEmpty) {
       return 0;
     }
 
-    final resolved = resolver.resolve(eligible);
+    final resolution = resolver.resolveWithDetails(eligible);
+    final resolved = resolution.resolved;
+    final supersededIds = resolution.supersededIds;
+
+    // Clear superseded/deduplicated event IDs from SQLite to prevent orphan pending queue loops
+    for (final id in supersededIds) {
+      await db.markSynced(id);
+    }
+
     if (resolved.isEmpty) {
       return 0;
     }
 
     await _markAsSyncing(resolved);
 
-    final uploaded = await _uploadBatch(resolved);
-    if (uploaded) {
+    final uploadOutcome = await _uploadBatch(resolved);
+    if (uploadOutcome == SyncUploadOutcome.success) {
       for (final event in resolved) {
         await db.markSynced(event.id);
       }
       return resolved.length;
+    }
+
+    if (uploadOutcome == SyncUploadOutcome.permanentFailure) {
+      for (final event in resolved) {
+        await db.markRejected(event.id, reason: 'Server rejected this offline event batch as non-retryable.');
+      }
+      return 0;
     }
 
     for (final event in resolved) {
@@ -75,10 +127,10 @@ class SyncEngine {
     }
   }
 
-  Future<bool> _uploadBatch(List<TripEvent> events) async {
+  Future<SyncUploadOutcome> _uploadBatch(List<TripEvent> events) async {
     final body = jsonEncode({
       'events': events.map((event) => event.toJson()).toList(),
-      'idempotencyKey': events.map((event) => event.id).join(','),
+      'idempotencyKey': _idempotencyKeyFor(events),
     });
 
     try {
@@ -88,8 +140,8 @@ class SyncEngine {
       final token = session?.accessToken;
 
       if (token == null) {
-        print('[SyncEngine] ⚠️ Cannot sync batch: User session token is null/expired.');
-        return false;
+        developer.log('[SyncEngine] ⚠️ Cannot sync batch: User session token is null/expired.');
+        return SyncUploadOutcome.retryableFailure;
       }
 
       final response = await http.post(
@@ -99,30 +151,30 @@ class SyncEngine {
           'Authorization': 'Bearer $token', // ✅ INJECT ACCESS TOKEN
         },
         body: body,
-      ).timeout(const Duration(seconds: 15));
+      ).timeout(AppConfig.syncTimeout);
 
       if (response.statusCode == 200 || response.statusCode == 202) {
-        return true;
+        return SyncUploadOutcome.success;
       }
 
       if (response.statusCode == 401) {
-        print('[SyncEngine] 🚨 Auth rejected by server (401 Unauthorized).');
-        return false;
+        developer.log('[SyncEngine] 🚨 Auth rejected by server (401 Unauthorized).');
+        return SyncUploadOutcome.retryableFailure;
       }
 
       if (response.statusCode == 409 || response.statusCode == 422 || response.statusCode == 400) {
-        return false;
+        return SyncUploadOutcome.permanentFailure;
       }
 
       if (response.statusCode == 429 || response.statusCode >= 500) {
         await Future<void>.delayed(_backoffDelay(_maxRetryCount(events)));
-        return false;
+        return SyncUploadOutcome.retryableFailure;
       }
 
-      return false;
+      return SyncUploadOutcome.retryableFailure;
     } catch (_) {
       await Future<void>.delayed(_backoffDelay(_maxRetryCount(events)));
-      return false;
+      return SyncUploadOutcome.retryableFailure;
     }
   }
 
@@ -130,8 +182,13 @@ class SyncEngine {
     return events.map((event) => event.retryCount).reduce((value, element) => value > element ? value : element);
   }
 
+  String _idempotencyKeyFor(List<TripEvent> events) {
+    final ids = events.map((event) => event.id).toList()..sort();
+    return ids.join(',');
+  }
+
   Duration _backoffDelay(int retryCount) {
-    final delayMs = 250 * (1 << (retryCount.clamp(0, 5)));
+    final delayMs = 250 * (1 << (retryCount.clamp(0, 5).toInt()));
     return Duration(milliseconds: delayMs > 8000 ? 8000 : delayMs);
   }
 }

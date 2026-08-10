@@ -1,11 +1,15 @@
--- Migration: Update complete_trip_tx(p_order_id UUID) to atomically complete the driver's active trip, its items/stops, and the order/timeline.
+-- Migration: Update complete_trip_tx(p_order_id UUID, p_otp_id UUID) to atomically
+-- consume the delivery OTP and complete the driver's active trip, its items/stops,
+-- and the order/timeline.
 -- Also add partial unique index on trips table to ensure a driver can have at most one active trip at any given time.
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_trips_one_active_per_driver 
 ON trips (driver_id) 
 WHERE (status = 'active');
 
-CREATE OR REPLACE FUNCTION complete_trip_tx(p_order_id UUID)
+DROP FUNCTION IF EXISTS complete_trip_tx(UUID);
+
+CREATE OR REPLACE FUNCTION complete_trip_tx(p_order_id UUID, p_otp_id UUID)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -13,10 +17,11 @@ AS $$
 DECLARE
   v_order RECORD;
   v_trip_display_id TEXT;
-  v_active_trip_count INT;
+  v_otp_updated INT;
+  v_updated_count INT;
 BEGIN
   -- Get the order details
-  SELECT * INTO v_order FROM orders WHERE id = p_order_id;
+  SELECT * INTO v_order FROM orders WHERE id = p_order_id FOR UPDATE;
   
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Order not found';
@@ -31,47 +36,56 @@ BEGIN
     RETURN;
   END IF;
 
-  -- Safe lookup for the driver's active trip
-  SELECT COUNT(*) INTO v_active_trip_count
+  -- Check if the order was cancelled
+  IF v_order.status = 'cancelled' THEN
+    RAISE EXCEPTION 'Order has been cancelled — cannot complete trip';
+  END IF;
+
+  -- Finalize the active trip that actually served THIS order
+  SELECT trip_display_id INTO v_trip_display_id
   FROM trips
-  WHERE driver_id = v_order.driver_id AND status = 'active';
+  WHERE order_id = p_order_id AND status = 'active'
+  ORDER BY created_at
+  LIMIT 1;
 
-  IF v_active_trip_count > 1 THEN
-    RAISE EXCEPTION 'Multiple active trips found for driver %', v_order.driver_id;
+  IF v_trip_display_id IS NULL THEN
+    RAISE EXCEPTION 'No active trip found for this order — cannot complete trip';
   END IF;
 
-  IF v_active_trip_count = 1 THEN
-    SELECT trip_display_id INTO v_trip_display_id
-    FROM trips
-    WHERE driver_id = v_order.driver_id AND status = 'active';
+  -- Update trip record
+  UPDATE trips
+  SET status = 'completed',
+      end_time = TO_CHAR(NOW(), 'HH24:MI'),
+      updated_at = NOW()
+  WHERE trip_display_id = v_trip_display_id;
 
-    -- Update trip record
-    UPDATE trips
-    SET status = 'completed',
-        end_time = TO_CHAR(NOW(), 'HH24:MI'),
-        updated_at = NOW()
-    WHERE trip_display_id = v_trip_display_id;
+  -- Update trip items to delivered
+  UPDATE trip_items
+  SET is_delivered = true
+  WHERE trip_display_id = v_trip_display_id;
 
-    -- Update trip items to delivered
-    UPDATE trip_items
-    SET is_delivered = true
-    WHERE trip_display_id = v_trip_display_id;
+  -- Update trip stops to completed/delivered
+  UPDATE trip_stops
+  SET is_completed = true,
+      is_current = false,
+      status_label = 'Delivered',
+      updated_at = NOW()
+  WHERE trip_display_id = v_trip_display_id;
 
-    -- Update trip stops to completed/delivered
-    UPDATE trip_stops
-    SET is_completed = true,
-        is_current = false,
-        status_label = 'Delivered',
-        updated_at = NOW()
-    WHERE trip_display_id = v_trip_display_id;
-  END IF;
-
-  -- Update order status to payment_released
+  -- Update order status to payment_released with defensive WHERE guards
   UPDATE orders
   SET otp_verified = true,
       status = 'payment_released',
       updated_at = NOW()
-  WHERE id = p_order_id;
+  WHERE id = p_order_id
+    AND status != 'cancelled'
+    AND status != 'payment_released';
+
+  -- Verify the update actually affected a row
+  GET DIAGNOSTICS v_updated_count = ROW_COUNT;
+  IF v_updated_count = 0 THEN
+    RAISE EXCEPTION 'Order status changed during processing — possible concurrent cancellation';
+  END IF;
 
   -- Update order timeline milestone 'Delivered'
   UPDATE order_timeline

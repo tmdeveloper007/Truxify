@@ -63,19 +63,19 @@ describe('osrm - buildRouteUrl', () => {
 });
 
 describe('osrm - buildCacheKey', ()=> {
-  it('rounds coordinates to 4 decimanl places', () => {
+  it('rounds coordinates to 6 decimal places with v2 prefix', () => {
     const key = buildCacheKey({
       pickupLat: 12.9715987,
       pickupLng: 77.5945627,
       dropLat: 13.0827,
       dropLng: 80.2707,
     });
-    expect(key).toBe('osrm:route:12.9716:77.5946:13.0827:80.2707');
+    expect(key).toBe('osrm:route:v2:12.971599:77.594563:13.0827:80.2707');
   });
 
   it('produces same key for coordinates that round to same values', () => {
-    const key1 = buildCacheKey({ pickupLat: 12.97161, pickupLng: 77.5, dropLat:13.0, dropLng: 80.0});
-    const key2 = buildCacheKey({ pickupLat: 12.97164, pickupLng: 77.5, dropLat:13.0, dropLng:80.0});
+    const key1 = buildCacheKey({ pickupLat: 12.971111, pickupLng: 77.5, dropLat:13.0, dropLng: 80.0});
+    const key2 = buildCacheKey({ pickupLat: 12.971111, pickupLng: 77.5, dropLat:13.0, dropLng:80.0});
     expect(key1).toBe(key2);
   });
 
@@ -194,7 +194,8 @@ describe('osrm - getRouteEstimate', () => {
     expect(result).toBeNull();
     // After retries are exhausted, error is logged with 'after all retries' message
     expect(mockLogger.error).toHaveBeenCalledWith(
-      '[osrm] Fetch error after all retries:', 'AbortError'
+      { maxRetries: 3, errMessage: 'AbortError' },
+      'Fetch error after all retries:'
     );
   });
 
@@ -233,7 +234,7 @@ describe('osrm - getRouteEstimate', () => {
       pickupLat: 12.9715987, pickupLng: 77.5945627, dropLat: 13.0827, dropLng: 80.2707,
     });
 
-    expect(mockRedis.get).toHaveBeenCalledWith('osrm:route:12.9716:77.5946:13.0827:80.2707');
+    expect(mockRedis.get).toHaveBeenCalledWith('osrm:route:v2:12.971599:77.594563:13.0827:80.2707');
   });
 
   it('calls OSRM and stores result in Redis on cache miss', async () => {
@@ -249,7 +250,7 @@ describe('osrm - getRouteEstimate', () => {
     expect(result).toEqual({ distanceKm: 45, durationSeconds: 3600 });
     expect(fetch).toHaveBeenCalledOnce();
     expect(mockRedis.set).toHaveBeenCalledWith(
-      'osrm:route:12.9716:77.5946:13.0827:80.2707',
+      'osrm:route:v2:12.9716:77.5946:13.0827:80.2707',
       JSON.stringify(result),
       'EX',
       86400
@@ -308,5 +309,74 @@ describe('osrm - getRouteEstimate', () => {
     });
 
     expect(mockRedis.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('osrm - getRouteEstimate edge cases', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns null for null input', async () => {
+    const result = await getRouteEstimate(null);
+    expect(result).toBeNull();
+  });
+
+  it('returns null for undefined input', async () => {
+    const result = await getRouteEstimate(undefined);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when pickupLat is not finite', async () => {
+    const result = await getRouteEstimate({
+      pickupLat: NaN,
+      pickupLng: 77.5946,
+      dropLat: 13.0827,
+      dropLng: 80.2707,
+    });
+    expect(result).toBeNull();
+  });
+
+  it('returns null when dropLat is Infinity', async () => {
+    const result = await getRouteEstimate({
+      pickupLat: 12.9716,
+      pickupLng: 77.5946,
+      dropLat: Infinity,
+      dropLng: 80.2707,
+    });
+    expect(result).toBeNull();
+  });
+
+  it('uses cached result when Redis returns a hit', async () => {
+    const cachedResult = { distanceKm: 100, durationSeconds: 3600 };
+    mockRedis.get.mockResolvedValue(JSON.stringify(cachedResult));
+
+    const result = await getRouteEstimate({
+      pickupLat: 12.9716,
+      pickupLng: 77.5946,
+      dropLat: 13.0827,
+      dropLng: 80.2707,
+    });
+
+    expect(result).toEqual(cachedResult);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('returns null when Redis cache returns invalid JSON', async () => {
+    mockRedis.get.mockResolvedValue('not valid json');
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ routes: [{ distance: 50000, duration: 1800 }] }),
+    });
+
+    const result = await getRouteEstimate({
+      pickupLat: 12.9716,
+      pickupLng: 77.5946,
+      dropLat: 13.0827,
+      dropLng: 80.2707,
+    });
+
+    // Redis get failed (invalid JSON), fetch was called as fallback
+    expect(fetch).toHaveBeenCalled();
   });
 });

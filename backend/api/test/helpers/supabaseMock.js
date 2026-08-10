@@ -38,7 +38,8 @@ class SupabaseQueryBuilder {
     this._payload = null;       // for insert / rpc
     this._select = '*';
     this._filters = [];         // [{col, op, val}]
-    this._order = null;         // {col, ascending}
+    this._order = null;         // {col, ascending} — last .order() call
+    this._orders = [];          // [{col, ascending}] — every .order() call
     this._limit = null;
     this._single = false;
     this._maybeSingle = false;
@@ -61,6 +62,10 @@ class SupabaseQueryBuilder {
     this._options = options;
     return this;
   }
+  delete() {
+    this._mode = 'delete';
+    return this;
+  }
   select(columns = '*') {
     this._mode = this._mode ?? 'select';
     this._select = columns;
@@ -79,8 +84,11 @@ class SupabaseQueryBuilder {
   ilike(col, p) { this._filters.push({ col, op: 'ilike', val: p }); return this; }
   is(col, val)  { this._filters.push({ col, op: 'is', val }); return this; }
   not(col, op, val) { this._filters.push({ col, op: `not:${op}`, val }); return this; }
+  or(spec) { this._filters.push({ col: null, op: 'or', val: spec }); return this; }
   order(col, opts = {}) {
-    this._order = { col, ascending: opts.ascending !== false };
+    const entry = { col, ascending: opts.ascending !== false };
+    this._orders.push(entry);
+    this._order = entry;
     return this;
   }
   limit(n) { this._limit = n; return this; }
@@ -96,6 +104,47 @@ class SupabaseQueryBuilder {
   }
   catch(reject) { return this._exec().catch(reject); }
 
+  // Split a PostgREST-style OR spec on top-level commas, respecting and(...)
+  // groups so an inner comma does not break the group.
+  _splitOr(spec) {
+    const parts = [];
+    let depth = 0;
+    let current = '';
+    for (const ch of spec) {
+      if (ch === '(') depth++;
+      if (ch === ')') depth--;
+      if (ch === ',' && depth === 0) {
+        parts.push(current);
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    if (current) parts.push(current);
+    return parts;
+  }
+
+  // Parse a single `col.op.value` condition into a { col, op, val } filter.
+  _parseCond(cond) {
+    let opPrefix = '';
+    let rest = cond;
+    if (rest.startsWith('not.')) {
+      opPrefix = 'not:';
+      rest = rest.substring(4);
+    }
+    const firstDot = rest.indexOf('.');
+    const secondDot = rest.indexOf('.', firstDot + 1);
+    const col = rest.slice(0, firstDot);
+    const op = rest.slice(firstDot + 1, secondDot);
+    let val = rest.slice(secondDot + 1);
+    if (op === 'is') {
+      if (val === 'null') val = null;
+      if (val === 'true') val = true;
+      if (val === 'false') val = false;
+    }
+    return { col, op: opPrefix + op, val };
+  }
+
   _matches(row, f) {
     const v = row[f.col];
     let op = f.op;
@@ -104,44 +153,64 @@ class SupabaseQueryBuilder {
       negate = true;
       op = op.substring(4);
     }
-    let res = true;
+    let isMatched;
+    let res;
     switch (op) {
       case 'eq':
-      case 'is':
-        res = v === f.val;
+        isMatched = v === f.val;
         break;
+      case 'is':
+        // Postgres returns NULL for missing/undefined fields; a row without
+        // the column should satisfy an `is null` filter.
+        isMatched = f.val === null ? (v === null || v === undefined) : v === f.val;
+        break;
+      case 'or': {
+        const topLevel = this._splitOr(String(f.val));
+        isMatched = topLevel.some(cond => {
+          if (cond.startsWith('and(') && cond.endsWith(')')) {
+            return this._splitOr(cond.slice(4, -1)).every(part => this._matches(row, this._parseCond(part)));
+          }
+          return this._matches(row, this._parseCond(cond));
+        });
+        break;
+      }
       case 'neq':
-        res = v !== f.val;
+        isMatched = v !== f.val;
         break;
       case 'gt':
-        res = v > f.val;
+        isMatched = v > f.val;
         break;
       case 'gte':
-        res = v >= f.val;
+        isMatched = v >= f.val;
         break;
       case 'lt':
-        res = v < f.val;
+        isMatched = v < f.val;
         break;
       case 'lte':
-        res = v <= f.val;
+        isMatched = v <= f.val;
         break;
+      case 'ilike': {
+        const valRegex = new RegExp(f.val.replace(/%/g, '.*'), 'i');
+        isMatched = valRegex.test(v);
+        break;
+      }
       case 'in': {
         if (typeof f.val === 'string') {
           const clean = f.val.replace(/^\s*\(\s*|\s*\)\s*$/g, '');
           const items = clean.split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
-          res = items.includes(v);
+          isMatched = items.includes(v);
         } else if (Array.isArray(f.val)) {
-          res = f.val.includes(v);
+          isMatched = f.val.includes(v);
         } else {
-          res = false;
+          isMatched = false;
         }
         break;
       }
       default:
-        res = true;
+        isMatched = true;
         break;
     }
-    return negate ? !res : res;
+    return negate ? !isMatched : isMatched;
   }
 
   async _exec() {
@@ -152,11 +221,20 @@ class SupabaseQueryBuilder {
       select: this._select,
       filters: this._filters,
       order: this._order,
+      orders: this._orders,
       limit: this._limit,
       single: this._single,
       maybeSingle: this._maybeSingle,
     };
     this._calls.push(callRecord);
+
+    const matchingErrorIndex = this._programmed?.matchingErrors?.findIndex(item =>
+      item.table === this._table && item.mode === this._mode
+    ) ?? -1;
+    if (matchingErrorIndex !== -1) {
+      const [match] = this._programmed.matchingErrors.splice(matchingErrorIndex, 1);
+      return { data: null, error: match.error };
+    }
 
     // Programmed error path (e.g. simulate a supabase-side failure)
     if (this._programmed?.nextError) {
@@ -232,14 +310,36 @@ class SupabaseQueryBuilder {
       return { data: updatedRows, error: null };
     }
 
+    if (this._mode === 'delete') {
+      const rows = this._store[this._table] ?? [];
+      const remaining = [];
+      const deleted = [];
+      for (const row of rows) {
+        const matches = this._filters.every(f => this._matches(row, f));
+        if (matches) {
+          deleted.push(row);
+        } else {
+          remaining.push(row);
+        }
+      }
+      this._store[this._table] = remaining;
+      return { data: deleted, error: null };
+    }
+
     if (this._mode === 'select' || this._mode === null) {
       let rows = (this._store[this._table] ?? []).slice();
       for (const f of this._filters) {
         rows = rows.filter(r => this._matches(r, f));
       }
-      if (this._order) {
-        const { col, ascending } = this._order;
-        rows.sort((a, b) => (a[col] > b[col] ? 1 : a[col] < b[col] ? -1 : 0) * (ascending ? 1 : -1));
+      if (this._orders.length) {
+        rows.sort((a, b) => {
+          for (const { col, ascending } of this._orders) {
+            if (a[col] === b[col]) continue;
+            const cmp = a[col] > b[col] ? 1 : -1;
+            return ascending ? cmp : -cmp;
+          }
+          return 0;
+        });
       }
       const totalCount = rows.length;
       if (this._range) {
@@ -290,15 +390,80 @@ export function createSupabaseMock(initialStore = {}) {
         const data = programmed.nextData; programmed.nextData = null;
         return Promise.resolve({ data, error: null });
       }
+      // Simulate PL/pgSQL RPC side-effects that bump row versions
+      if (fnName === 'accept_bid_tx' && args?.p_order_id) {
+        const idx = store.orders?.findIndex(o => o.id === args.p_order_id);
+        if (idx !== -1 && typeof store.orders[idx].version === 'number') {
+          // Replace with a new object so the caller's reference retains the old version
+          store.orders[idx] = { ...store.orders[idx], version: store.orders[idx].version + 1 };
+        }
+        if (args.p_load_id) {
+          const offerIdx = store.load_offers?.findIndex(o => o.id === args.p_load_id);
+          if (offerIdx !== -1) {
+            store.load_offers[offerIdx] = { ...store.load_offers[offerIdx], status: 'claimed' };
+          }
+        }
+        if (idx !== -1) {
+          store.orders[idx] = { ...store.orders[idx], driver_id: args.p_driver_id, status: 'active' };
+        }
+      }
       return Promise.resolve({ data: null, error: null });
+    },
+    storage: {
+      from(bucket) {
+        return {
+          async upload(path, buffer, options) {
+            calls.push({ storageUpload: { bucket, path, options } });
+            if (programmed.nextStorageError) {
+              const err = programmed.nextStorageError;
+              programmed.nextStorageError = null;
+              return { data: null, error: err };
+            }
+            if (!store.__storageObjects) store.__storageObjects = [];
+            store.__storageObjects.push({ bucket, path, buffer, options });
+            return { data: { path }, error: null };
+          },
+          async createSignedUrl(path, expiresIn) {
+            calls.push({ storageSignedUrl: { bucket, path, expiresIn } });
+            const signedUrl = `https://mock-storage.supabase.co/storage/v1/object/sign/${bucket}/${path}?token=mock-token`;
+            return { data: { signedUrl }, error: null };
+          },
+          async remove(paths) {
+            calls.push({ storageRemove: { bucket, paths } });
+            if (!store.__storageObjects) store.__storageObjects = [];
+            const pathList = Array.isArray(paths) ? paths : [paths];
+            store.__storageObjects = store.__storageObjects.filter(
+              (o) => !(o.bucket === bucket && pathList.includes(o.path))
+            );
+            return { data: null, error: null };
+          },
+        };
+      },
     },
   };
   return {
     supabase,
     store,
     calls,
+    /**
+     * Return the mock to its initial state. Needed by suites that build the
+     * mock once at module scope — the usual shape when it has to be visible
+     * to a hoisted vi.mock factory — and clear it between tests instead of
+     * constructing a fresh one.
+     */
+    reset() {
+      for (const table of Object.keys(store)) delete store[table];
+      Object.assign(store, initialStore);
+      calls.length = 0;
+      for (const key of Object.keys(programmed)) delete programmed[key];
+    },
     programError(msg = 'mock error')    { programmed.nextError    = { message: msg }; },
+    programErrorFor(table, mode, msg = 'mock error') {
+      programmed.matchingErrors ??= [];
+      programmed.matchingErrors.push({ table, mode, error: { message: msg } });
+    },
     programRpcError(msg = 'mock error') { programmed.nextRpcError = { message: msg }; },
+    programStorageError(msg = 'mock error') { programmed.nextStorageError = { message: msg }; },
     programData(data)                   { programmed.nextData = data; },
   };
 }

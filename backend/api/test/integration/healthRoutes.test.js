@@ -4,12 +4,14 @@ import express from 'express';
 
 // Define mocks that we can mutate per-test
 let mockSupabase = null;
+let mockSupabaseAdmin = null;
 let mockMongoDb = null;
 let mockRedisClient = null;
 let mockFirebaseAdmin = null;
 
 vi.mock('../../src/config/db.js', () => ({
   get supabase() { return mockSupabase; },
+  get supabaseAdmin() { return mockSupabaseAdmin; },
   get mongoDb() { return mockMongoDb; },
   get redisClient() { return mockRedisClient; },
   get firebaseAdmin() { return mockFirebaseAdmin; }
@@ -46,6 +48,7 @@ describe('GET /api/health', () => {
       select: vi.fn().mockReturnThis(),
       limit: vi.fn().mockResolvedValue({ error: null })
     };
+    mockSupabaseAdmin = null;
 
     mockMongoDb = {
       admin: () => ({
@@ -70,6 +73,7 @@ describe('GET /api/health', () => {
       supabase: 'connected',
       mongodb: 'connected',
       redis: 'connected',
+      escrow: 'not_configured',
       firebase: 'configured',
       polygon: 'configured'
     });
@@ -88,6 +92,24 @@ describe('GET /api/health', () => {
       '[health] Supabase check failed:',
       'Supabase network error'
     );
+  });
+
+  it('probes through supabaseAdmin when anon privileges are revoked', async () => {
+    const adminLimit = vi.fn().mockResolvedValue({ error: null });
+    mockSupabaseAdmin = {
+      from: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      limit: adminLimit,
+    };
+    // Anon client would return 42501 permission denied — it must not be used.
+    mockSupabase.limit.mockResolvedValue({ error: { message: '42501 permission denied' } });
+
+    const res = await request(app).get('/api/health');
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('ok');
+    expect(res.body.services.supabase).toBe('connected');
+    expect(adminLimit).toHaveBeenCalledWith(1);
   });
 
   it('returns 503 and degraded status when MongoDB ping fails with an exception', async () => {
@@ -137,6 +159,7 @@ describe('GET /api/health', () => {
       supabase: 'not_configured',
       mongodb: 'not_configured',
       redis: 'not_configured',
+      escrow: 'not_configured',
       firebase: 'not_configured',
       polygon: 'not_configured'
     });
@@ -156,5 +179,47 @@ describe('GET /api/health/live', () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
     expect(res.body.uptime).toBeTypeOf('number');
+  });
+});
+
+describe('GET /api/health/ready', () => {
+  let app;
+
+  beforeEach(() => {
+    app = buildApp();
+    mockSupabase = {
+      from: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({ error: null })
+    };
+    mockMongoDb = {
+      admin: () => ({
+        ping: vi.fn().mockResolvedValue(true)
+      })
+    };
+    mockRedisClient = {
+      ping: vi.fn().mockResolvedValue('PONG')
+    };
+    mockFirebaseAdmin = {};
+    process.env.POLYGON_RPC_URL = 'http://localhost:8545';
+  });
+
+  it('returns ready status with services information', async () => {
+    const res = await request(app).get('/api/health/ready');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('ready');
+  });
+});
+
+describe('GET /api/health/sentry-debug', () => {
+  let app;
+
+  beforeEach(() => {
+    app = buildApp();
+  });
+
+  it('triggers a Sentry debug error and returns 500', async () => {
+    const res = await request(app).get('/api/health/sentry-debug');
+    expect(res.status).toBe(500);
   });
 });

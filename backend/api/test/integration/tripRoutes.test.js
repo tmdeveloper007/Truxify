@@ -7,6 +7,7 @@ const m = createSupabaseMock();
 
 vi.mock('../../src/config/db.js', () => ({
     supabase: m.supabase,
+    supabaseAdmin: m.supabase,
     firebaseAdmin: null,
     redisClient: null,
     mongoDb: null,
@@ -31,7 +32,7 @@ const validPayload = {
     events: [
         {
             id: 'event-1',
-            trip_id: 'trip-1',
+            trip_id: 'TX-ORDER1',
             type: 'location_update',
             occurred_at: new Date().toISOString(),
             payload: {
@@ -48,6 +49,9 @@ describe('Trip Routes', () => {
     beforeEach(() => {
         m.store.trip_events = [];
         m.store.processed_batches = [];
+        m.store.orders = [
+            { id: 'trip-1', order_display_id: 'ORDER1', driver_id: 'driver-1', customer_id: 'customer-1' },
+        ];
         m.calls.length = 0;
     });
 
@@ -87,7 +91,7 @@ describe('Trip Routes', () => {
                 events: [
                     {
                         id: 'event-1',
-                        trip_id: 'trip-1',
+                        trip_id: 'TX-ORDER1',
                         type: 'location_update',
                         occurred_at: 'invalid-date',
                         payload: {},
@@ -116,7 +120,7 @@ describe('Trip Routes', () => {
             });
 
         expect(res.status).toBe(200);
-        expect(res.body.message).toBe('Empty batch received, nothing to process.');
+        expect(res.body.error).toBe('Empty batch received, nothing to process.');
     });
 
     it('POST /events/batch returns 202 when batch was already processed', async () => {
@@ -132,7 +136,7 @@ describe('Trip Routes', () => {
             .send(validPayload);
 
         expect(res.status).toBe(202);
-        expect(res.body.message).toBe('Batch already processed.');
+        expect(res.body.error).toBe('Batch already processed.');
     });
 
     it('POST /events/batch inserts trip events and logs processed batch', async () => {
@@ -181,7 +185,7 @@ describe('Trip Routes', () => {
             expect.objectContaining({
                 event_id: 'event-1',
                 user_id: 'driver-1',
-                trip_id: 'trip-1',
+                trip_id: 'TX-ORDER1',
                 event_type: 'location_update',
                 latitude: 19.076,
                 longitude: 72.8777,
@@ -229,6 +233,54 @@ describe('Trip Routes', () => {
         expect(res.body.error).toBe('Database failed to process batch.');
     });
 
+    it('POST /events/batch returns 403 when the caller does not own the trip', async () => {
+        m.store.orders = [];
+
+        const res = await request(buildApp())
+            .post('/api/v1/trips/events/batch')
+            .set(DRIVER_HEADERS)
+            .send(validPayload);
+
+        expect(res.status).toBe(403);
+        expect(res.body.error).toContain('Access Denied');
+    });
+
+    it('POST /events/batch returns 403 when the caller owns only some of the trips', async () => {
+        m.store.orders = [
+            { id: 'trip-1', order_display_id: 'ORDER1', driver_id: 'driver-1', customer_id: 'customer-1' },
+        ];
+
+        const res = await request(buildApp())
+            .post('/api/v1/trips/events/batch')
+            .set(DRIVER_HEADERS)
+            .send({
+                idempotencyKey: 'batch-partial-ownership',
+                events: [
+                    validPayload.events[0],
+                    {
+                        ...validPayload.events[0],
+                        id: 'event-other-trip',
+                        trip_id: 'TX-OTHER',
+                    },
+                ],
+            });
+
+        expect(res.status).toBe(403);
+        expect(res.body.error).toContain('Access Denied');
+    });
+
+    it('POST /events/batch returns 500 when trip ownership check fails', async () => {
+        m.programErrorFor('orders', 'select', 'ownership check failed');
+
+        const res = await request(buildApp())
+            .post('/api/v1/trips/events/batch')
+            .set(DRIVER_HEADERS)
+            .send(validPayload);
+
+        expect(res.status).toBe(500);
+        expect(res.body.error).toBe('Internal Server Error');
+    });
+
     it('POST /events/batch returns 422 for otpDelivery event containing otp', async () => {
         const res = await request(buildApp())
             .post('/api/v1/trips/events/batch')
@@ -238,7 +290,7 @@ describe('Trip Routes', () => {
                 events: [
                     {
                         id: 'event-otp-leak',
-                        trip_id: 'trip-1',
+                        trip_id: 'TX-ORDER1',
                         type: 'otpDelivery',
                         occurred_at: new Date().toISOString(),
                         payload: {
@@ -262,7 +314,7 @@ describe('Trip Routes', () => {
                 events: [
                     {
                         id: 'event-gps-oob',
-                        trip_id: 'trip-1',
+                        trip_id: 'TX-ORDER1',
                         type: 'gpsUpdate',
                         occurred_at: new Date().toISOString(),
                         payload: {
@@ -273,8 +325,8 @@ describe('Trip Routes', () => {
                 ],
             });
 
-        expect(res.status).toBe(422);
-        expect(res.body.error).toContain('Unprocessable Entity: Invalid event payload for type gpsUpdate');
+        expect(res.status).toBe(400);
+        expect(res.body.error).toBe('Invalid coordinate data');
     });
 
     it('POST /events/batch inserts trip events and strips sensitive fields from metadata', async () => {
@@ -303,7 +355,7 @@ describe('Trip Routes', () => {
                 events: [
                     {
                         id: 'event-sensitive',
-                        trip_id: 'trip-1',
+                        trip_id: 'TX-ORDER1',
                         type: 'gpsUpdate',
                         occurred_at: new Date().toISOString(),
                         payload: {
@@ -326,6 +378,122 @@ describe('Trip Routes', () => {
         expect(upsertCall.payload[0].metadata).not.toHaveProperty('secret');
         expect(upsertCall.payload[0].metadata).not.toHaveProperty('password');
         expect(upsertCall.payload[0].metadata.lat).toBe(19.076);
+    });
+
+    it('POST /events/batch inserts non-telemetry events (otpDelivery) with NULL coordinates', async () => {
+        const originalFrom = m.supabase.from.bind(m.supabase);
+        m.supabase.from = table => {
+            const builder = originalFrom(table);
+            if (table === 'trip_events') {
+                builder.upsert = vi.fn(async payload => {
+                    m.calls.push({
+                        table: 'trip_events',
+                        mode: 'upsert',
+                        payload,
+                    });
+                    m.store.trip_events.push(...payload);
+                    return { data: payload, error: null };
+                });
+            }
+            return builder;
+        };
+
+        const res = await request(buildApp())
+            .post('/api/v1/trips/events/batch')
+            .set(DRIVER_HEADERS)
+            .send({
+                idempotencyKey: 'batch-otp-delivery',
+                events: [
+                    {
+                        id: 'event-otp',
+                        trip_id: 'TX-ORDER1',
+                        type: 'otpDelivery',
+                        occurred_at: new Date().toISOString(),
+                        payload: {
+                            stopId: 'stop-1',
+                        },
+                    },
+                ],
+            });
+
+        m.supabase.from = originalFrom;
+
+        expect(res.status).toBe(202);
+        const upsertCall = m.calls.find(
+            c => c.table === 'trip_events' && c.mode === 'upsert' && c.payload[0].event_id === 'event-otp'
+        );
+        expect(upsertCall).toBeTruthy();
+        expect(upsertCall.payload[0]).toEqual(
+            expect.objectContaining({
+                event_id: 'event-otp',
+                event_type: 'otpDelivery',
+                latitude: null,
+                longitude: null,
+                metadata: { stopId: 'stop-1' },
+            })
+        );
+    });
+
+    it('POST /events/batch replays markStopCompleted by completing the stop and advancing the current stop', async () => {
+        m.store.trip_stops = [
+            {
+                id: 'stop-1',
+                trip_display_id: 'TX-ORDER1',
+                is_completed: false,
+                is_current: true,
+                status_label: 'In Progress',
+                sort_order: 1,
+            },
+            {
+                id: 'stop-2',
+                trip_display_id: 'TX-ORDER1',
+                is_completed: false,
+                is_current: false,
+                status_label: 'Pending',
+                sort_order: 2,
+            },
+        ];
+
+        const originalFrom = m.supabase.from.bind(m.supabase);
+        m.supabase.from = table => {
+            const builder = originalFrom(table);
+            if (table === 'trip_events') {
+                builder.upsert = vi.fn(async payload => {
+                    m.store.trip_events.push(...payload);
+                    return { data: payload, error: null };
+                });
+            }
+            return builder;
+        };
+
+        const res = await request(buildApp())
+            .post('/api/v1/trips/events/batch')
+            .set(DRIVER_HEADERS)
+            .send({
+                idempotencyKey: 'batch-mark-stop-completed',
+                events: [
+                    {
+                        id: 'event-stop-completed',
+                        trip_id: 'TX-ORDER1',
+                        type: 'markStopCompleted',
+                        occurred_at: new Date().toISOString(),
+                        payload: { stopId: 'stop-1' },
+                    },
+                ],
+            });
+
+        m.supabase.from = originalFrom;
+
+        expect(res.status).toBe(202);
+
+        const completedStop = m.store.trip_stops.find((s) => s.id === 'stop-1');
+        expect(completedStop.is_completed).toBe(true);
+        expect(completedStop.is_current).toBe(false);
+        expect(completedStop.status_label).toBe('Delivered');
+
+        const nextStop = m.store.trip_stops.find((s) => s.id === 'stop-2');
+        expect(nextStop.is_current).toBe(true);
+        expect(nextStop.status_label).toBe('In Progress');
     });
 });
 
@@ -356,54 +524,71 @@ describe('GET /api/trips/:id/events', () => {
     process.env.BYPASS_AUTH = 'true';
     process.env.NODE_ENV = 'test';
     m.store.trip_events = [];
-    m.store.orders = [];
+    m.store.orders = [
+      { id: '11111111-1111-4111-a111-111111111111', driver_id: 'driver-1', customer_id: 'customer-1' },
+    ];
     m.calls.length = 0;
   });
 
   it('returns 404 when trip has no events and no matching order', async () => {
+    m.store.orders = [];
     const res = await request(buildEventsApp())
-      .get('/api/trips/nonexistent-trip/events')
+      .get('/api/trips/22222222-2222-4222-a222-222222222222/events')
       .set(DRIVER_HEADERS);
 
-    expect(res.status).toBe(404);
+    console.log("RESPONSE:", res.body); expect(res.status).toBe(404);
     expect(res.body.error).toBe('Trip not found.');
   });
 
-  it('returns events for the driver who uploaded them', async () => {
+  it('returns 404 when no matching order exists even if events were injected', async () => {
+    m.store.orders = [];
     m.store.trip_events.push(
-      { event_id: 'ev-1', user_id: 'driver-1', trip_id: 'trip-abc', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
-      { event_id: 'ev-2', user_id: 'driver-1', trip_id: 'trip-abc', event_type: 'milestone', event_timestamp: '2026-06-01T11:00:00Z', latitude: null, longitude: null, metadata: { milestone: 'Delivered' }, created_at: '2026-06-01T11:00:00Z' },
+      { event_id: 'ev-1', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
     );
 
     const res = await request(buildEventsApp())
-      .get('/api/trips/trip-abc/events')
+      .get('/api/trips/11111111-1111-4111-a111-111111111111/events')
       .set(DRIVER_HEADERS);
 
-    expect(res.status).toBe(200);
-    expect(res.body.trip_id).toBe('trip-abc');
-    expect(res.body.events).toHaveLength(2);
+    expect(res.status).toBe(404);
   });
 
   it('returns 403 for a user who is neither driver, customer, nor admin', async () => {
     m.store.trip_events.push(
-      { event_id: 'ev-1', user_id: 'driver-1', trip_id: 'trip-abc', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
+      { event_id: 'ev-1', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
     );
-    // No order => customer_id won't match
+    // Order belongs to a different customer => customer-1 must be denied
+    m.store.orders[0].customer_id = 'customer-2';
     const res = await request(buildEventsApp())
-      .get('/api/trips/trip-abc/events')
+      .get('/api/trips/11111111-1111-4111-a111-111111111111/events')
       .set(CUSTOMER_HEADERS);
 
     expect(res.status).toBe(403);
   });
 
-  it('allows the order customer to access trip events', async () => {
+  it('returns events for the driver who uploaded them', async () => {
     m.store.trip_events.push(
-      { event_id: 'ev-1', user_id: 'driver-1', trip_id: 'trip-xyz', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
+      { event_id: 'ev-1', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
+      { event_id: 'ev-2', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'milestone', event_timestamp: '2026-06-01T11:00:00Z', latitude: null, longitude: null, metadata: { milestone: 'Delivered' }, created_at: '2026-06-01T11:00:00Z' },
     );
-    m.store.orders.push({ id: 'trip-xyz', driver_id: 'driver-1', customer_id: 'customer-1' });
 
     const res = await request(buildEventsApp())
-      .get('/api/trips/trip-xyz/events')
+      .get('/api/trips/11111111-1111-4111-a111-111111111111/events')
+      .set(DRIVER_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.trip_id).toBe('11111111-1111-4111-a111-111111111111');
+    expect(res.body.events).toHaveLength(2);
+  });
+
+  it('allows the order customer to access trip events', async () => {
+    m.store.trip_events.push(
+      { event_id: 'ev-1', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
+    );
+    m.store.orders.push({ id: '11111111-1111-4111-a111-111111111111', driver_id: 'driver-1', customer_id: 'customer-1' });
+
+    const res = await request(buildEventsApp())
+      .get('/api/trips/11111111-1111-4111-a111-111111111111/events')
       .set(CUSTOMER_HEADERS);
 
     expect(res.status).toBe(200);
@@ -412,11 +597,11 @@ describe('GET /api/trips/:id/events', () => {
 
   it('allows admins to access any trip events', async () => {
     m.store.trip_events.push(
-      { event_id: 'ev-1', user_id: 'driver-1', trip_id: 'trip-admin', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
+      { event_id: 'ev-1', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
     );
 
     const res = await request(buildEventsApp())
-      .get('/api/trips/trip-admin/events')
+      .get('/api/trips/11111111-1111-4111-a111-111111111111/events')
       .set(ADMIN_HEADERS);
 
     expect(res.status).toBe(200);
@@ -425,16 +610,72 @@ describe('GET /api/trips/:id/events', () => {
 
   it('filters events by type when ?type query param is provided', async () => {
     m.store.trip_events.push(
-      { event_id: 'ev-1', user_id: 'driver-1', trip_id: 'trip-filter', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
-      { event_id: 'ev-2', user_id: 'driver-1', trip_id: 'trip-filter', event_type: 'milestone', event_timestamp: '2026-06-01T11:00:00Z', latitude: null, longitude: null, metadata: {}, created_at: '2026-06-01T11:00:00Z' },
+      { event_id: 'ev-1', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
+      { event_id: 'ev-2', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'milestone', event_timestamp: '2026-06-01T11:00:00Z', latitude: null, longitude: null, metadata: {}, created_at: '2026-06-01T11:00:00Z' },
     );
 
     const res = await request(buildEventsApp())
-      .get('/api/trips/trip-filter/events?type=gpsUpdate')
+      .get('/api/trips/11111111-1111-4111-a111-111111111111/events?type=gpsUpdate')
       .set(DRIVER_HEADERS);
 
     expect(res.status).toBe(200);
     expect(res.body.events).toHaveLength(1);
     expect(res.body.events[0].event_type).toBe('gpsUpdate');
+  });
+
+  it('supports custom sorting order with sort=desc', async () => {
+    m.store.trip_events.push(
+      { event_id: 'ev-1', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
+      { event_id: 'ev-2', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'milestone', event_timestamp: '2026-06-01T11:00:00Z', latitude: null, longitude: null, metadata: {}, created_at: '2026-06-01T11:00:00Z' },
+    );
+
+    const res = await request(buildEventsApp())
+      .get('/api/trips/11111111-1111-4111-a111-111111111111/events?sort=desc')
+      .set(DRIVER_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events).toHaveLength(2);
+    expect(res.body.events[0].event_id).toBe('ev-2');
+  });
+
+  it('filters events within a geographic bounding box when coordinates are provided', async () => {
+    m.store.trip_events.push(
+      { event_id: 'ev-in', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.5, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
+      { event_id: 'ev-out', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T11:00:00Z', latitude: 25.0, longitude: 80.0, metadata: {}, created_at: '2026-06-01T11:00:00Z' }
+    );
+
+    const res = await request(buildEventsApp())
+      .get('/api/trips/11111111-1111-4111-a111-111111111111/events?min_lat=19.0&max_lat=20.0&min_lng=72.0&max_lng=73.0')
+      .set(DRIVER_HEADERS);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events).toHaveLength(1);
+    expect(res.body.events[0].event_id).toBe('ev-in');
+  });
+
+  it('returns 400 for a non-numeric coordinate query param', async () => {
+    m.store.trip_events.push(
+      { event_id: 'ev-1', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
+    );
+
+    const res = await request(buildEventsApp())
+      .get('/api/trips/11111111-1111-4111-a111-111111111111/events?min_lat=abc')
+      .set(DRIVER_HEADERS);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('min_lat must be a number');
+  });
+
+  it('returns 400 for an out-of-range coordinate query param', async () => {
+    m.store.trip_events.push(
+      { event_id: 'ev-1', user_id: 'driver-1', trip_id: '11111111-1111-4111-a111-111111111111', event_type: 'gpsUpdate', event_timestamp: '2026-06-01T10:00:00Z', latitude: 19.0, longitude: 72.8, metadata: {}, created_at: '2026-06-01T10:00:00Z' },
+    );
+
+    const res = await request(buildEventsApp())
+      .get('/api/trips/11111111-1111-4111-a111-111111111111/events?max_lng=200')
+      .set(DRIVER_HEADERS);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('max_lng must be a number within [-180, 180]');
   });
 });
