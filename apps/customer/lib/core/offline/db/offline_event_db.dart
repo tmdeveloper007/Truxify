@@ -5,6 +5,22 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/trip_event.dart';
 
+class OfflineDbStats {
+  int totalEvents = 0;
+  int pendingEvents = 0;
+  int syncedEvents = 0;
+
+  static Future<OfflineDbStats> collect(Database db) async {
+    final total = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM trip_events')) ?? 0;
+    final pending = Sqflite.firstIntValue(await db.rawQuery("SELECT COUNT(*) FROM trip_events WHERE sync_status IN ('pending', 'failed')")) ?? 0;
+    final synced = Sqflite.firstIntValue(await db.rawQuery("SELECT COUNT(*) FROM trip_events WHERE sync_status = 'synced'")) ?? 0;
+    return OfflineDbStats()
+      ..totalEvents = total
+      ..pendingEvents = pending
+      ..syncedEvents = synced;
+  }
+}
+
 class OfflineEventDb {
   static const _tableName = 'trip_events';
 

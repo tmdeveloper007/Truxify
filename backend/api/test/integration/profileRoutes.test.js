@@ -5,11 +5,18 @@ import express from 'express';
 vi.mock('../../src/lib/profileCache.js', () => ({
   invalidateCachedProfile: vi.fn(),
   invalidateCachedSupabaseProfile: vi.fn(),
+  invalidateCachedSupabaseProfileAll: vi.fn(),
   getCachedProfile: vi.fn(),
   setCachedProfile: vi.fn(),
+  getCachedSupabaseProfile: vi.fn(),
+  setCachedSupabaseProfile: vi.fn(),
+  getCachedCustomerStats: vi.fn(),
+  setCachedCustomerStats: vi.fn(),
+  getCachedDriverDetails: vi.fn(),
+  setCachedDriverDetails: vi.fn(),
 }));
 
-const { invalidateCachedProfile, invalidateCachedSupabaseProfile } = await import('../../src/lib/profileCache.js');
+const { invalidateCachedProfile, invalidateCachedSupabaseProfileAll } = await import('../../src/lib/profileCache.js');
 
 const { createSupabaseMock } = await vi.importActual('../helpers/supabaseMock.js');
 const m = createSupabaseMock();
@@ -42,12 +49,6 @@ const DRIVER_HEADERS = {
   'x-user-name': 'Test Driver',
 };
 
-const ADMIN_HEADERS = {
-  'x-user-id': 'admin-uuid-789',
-  'x-user-role': 'admin',
-  'x-user-name': 'Test Admin',
-};
-
 describe('Profile Routes', () => {
   beforeEach(() => {
     process.env.BYPASS_AUTH = 'true';
@@ -55,6 +56,7 @@ describe('Profile Routes', () => {
     m.store.profiles = [];
     m.store.customer_stats = [];
     m.store.driver_details = [];
+    m.store.orders = [];
     m.calls.length = 0;
     vi.clearAllMocks();
   });
@@ -110,7 +112,6 @@ describe('Profile Routes', () => {
         language: 'en',
         darkMode: false,
         isActive: true,
-        // Wallet fields introduced by the escrow payout feature
         walletAddress: null,
         polygonWalletAddress: null,
       });
@@ -163,13 +164,11 @@ describe('Profile Routes', () => {
         fullName: 'John Driver',
         phone: '+919999999999',
         email: 'john@example.com',
-        // companyName defaults to an empty string (display-safe) when unset
         companyName: '',
         avatarUrl: 'https://r2.com/driver.jpg',
         language: 'hi',
         darkMode: true,
         isActive: true,
-        // Wallet fields introduced by the escrow payout feature
         walletAddress: null,
         polygonWalletAddress: null,
       });
@@ -184,6 +183,68 @@ describe('Profile Routes', () => {
         walletPending: 12000,
         walletTotal: 62000,
       });
+    });
+  });
+
+  describe('GET /api/profile/customer-stats', () => {
+    it('returns 403 for non-customer role', async () => {
+      m.store.profiles.push({
+        id: 'driver-uuid-456',
+        firebase_uid: 'firebase-driver-uid',
+        role: 'driver',
+        full_name: 'Test Driver',
+      });
+
+      const res = await request(buildApp())
+        .get('/api/profile/customer-stats')
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Customer stats are only available');
+    });
+
+    it('returns customer stats for customer role', async () => {
+      m.store.profiles.push({
+        id: 'customer-uuid-123',
+        firebase_uid: 'firebase-cust-uid',
+        role: 'customer',
+        full_name: 'Jane Doe',
+      });
+
+      m.store.customer_stats.push({
+        id: 'stats-1',
+        user_id: 'customer-uuid-123',
+        total_orders: 42,
+        total_saved: 12500,
+        co2_reduced_kg: 15.6,
+      });
+
+      const res = await request(buildApp())
+        .get('/api/profile/customer-stats')
+        .set(CUSTOMER_HEADERS);
+
+      expect(res.status).toBe(200);
+      expect(res.body.stats).toEqual({
+        totalOrders: 42,
+        totalSaved: 12500,
+        co2ReducedKg: 15.6,
+      });
+    });
+
+    it('returns null stats when no customer_stats row exists', async () => {
+      m.store.profiles.push({
+        id: 'customer-uuid-123',
+        firebase_uid: 'firebase-cust-uid',
+        role: 'customer',
+        full_name: 'New Customer',
+      });
+
+      const res = await request(buildApp())
+        .get('/api/profile/customer-stats')
+        .set(CUSTOMER_HEADERS);
+
+      expect(res.status).toBe(200);
+      expect(res.body.stats).toBeNull();
     });
   });
 
@@ -226,6 +287,7 @@ describe('Profile Routes', () => {
       expect(res.body.message).toBe('Profile updated');
       expect(res.body.profile).toEqual(updatedProfileRow);
       expect(invalidateCachedProfile).toHaveBeenCalledWith('test_firebase_uid_123');
+      expect(invalidateCachedSupabaseProfileAll).toHaveBeenCalledWith('customer-uuid-123');
 
       const profileUpdateCall = m.calls.find(c => c.table === 'profiles' && c.mode === 'update');
       expect(profileUpdateCall.payload).toEqual({
@@ -286,6 +348,7 @@ describe('Profile Routes', () => {
       expect(res.body.message).toBe('Profile updated');
       expect(res.body.profile).toEqual(updatedProfileRow);
       expect(invalidateCachedProfile).toHaveBeenCalledWith('test_firebase_uid_123');
+      expect(invalidateCachedSupabaseProfileAll).toHaveBeenCalledWith('driver-uuid-456');
 
       const profileUpdateCall = m.calls.find(c => c.table === 'profiles' && c.mode === 'update');
       expect(profileUpdateCall.payload).toEqual({
@@ -323,6 +386,7 @@ describe('Profile Routes', () => {
         walletAddress: '0x1234567890abcdef1234567890abcdef12345678',
       });
       expect(invalidateCachedProfile).toHaveBeenCalledWith('test_firebase_uid_123');
+      expect(invalidateCachedSupabaseProfileAll).toHaveBeenCalledWith('customer-uuid-123');
 
       const profileUpdateCall = m.calls.find(c => c.table === 'profiles' && c.mode === 'update');
       expect(profileUpdateCall.payload).toEqual({
@@ -528,46 +592,109 @@ describe('Profile Routes', () => {
     });
   });
 
-  describe('DELETE /api/profile/admin/cache/:userId', () => {
-    it('invalidates Firebase and Supabase profile caches when passed a profile id', async () => {
-      // The route only attempts an id lookup for UUID-shaped input
-      // (non-UUID strings would fail the Postgres uuid cast), so the
-      // fixture id must be a real UUID.
-      const customerUuid = '3f2e1d4c-5b6a-4789-9abc-def012345678';
-      m.store.profiles.push({
-        id: customerUuid,
-        firebase_uid: 'firebase-cust-uid',
-        role: 'customer',
-      });
+  describe('GET /api/profile/driver/performance-stats', () => {
+    it('computes stats from real order data', async () => {
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      m.store.orders.push(
+        {
+          id: 'order-1',
+          driver_id: 'driver-uuid-456',
+          status: 'delivered',
+          distance_km: 100,
+          customer_rating: 5,
+          on_time: true,
+          base_freight: 1000,
+          created_at: `${currentMonth}-05T00:00:00Z`,
+        },
+        {
+          id: 'order-2',
+          driver_id: 'driver-uuid-456',
+          status: 'payment_released',
+          distance_km: 200,
+          customer_rating: 4,
+          on_time: false,
+          base_freight: 2000,
+          created_at: `${currentMonth}-10T00:00:00Z`,
+        },
+        {
+          id: 'order-other-driver',
+          driver_id: 'other-driver',
+          status: 'delivered',
+          distance_km: 999,
+          customer_rating: 1,
+          on_time: true,
+          base_freight: 9999,
+          created_at: `${currentMonth}-01T00:00:00Z`,
+        }
+      );
 
       const res = await request(buildApp())
-        .delete(`/api/profile/admin/cache/${customerUuid}`)
-        .set(ADMIN_HEADERS);
+        .get('/api/profile/driver/performance-stats')
+        .set(DRIVER_HEADERS);
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({
-        success: true,
-        message: `Cache invalidated for user ${customerUuid}.`,
+      expect(res.body.totalDeliveries).toBe(2);
+      expect(res.body.totalDistanceKm).toBe(300);
+      expect(res.body.averageRating).toBe(4.5);
+      expect(res.body.onTimePercentage).toBe(50);
+      expect(res.body.lifetimeEarnings).toBe(30);
+      expect(res.body.monthlyPerformanceSummary).toEqual({
+        month: currentMonth,
+        deliveriesCompleted: 2,
+        earnings: 30,
       });
-      expect(invalidateCachedProfile).toHaveBeenCalledWith('firebase-cust-uid');
-      expect(invalidateCachedSupabaseProfile).toHaveBeenCalledWith(customerUuid);
     });
 
-    it('resolves Firebase uid input before invalidating both profile caches', async () => {
-      m.store.profiles.push({
-        id: 'driver-uuid-456',
-        firebase_uid: 'firebase-driver-uid',
-        role: 'driver',
-      });
-
+    it('returns zeros instead of fabricated values when there is no data', async () => {
       const res = await request(buildApp())
-        .delete('/api/profile/admin/cache/firebase-driver-uid')
-        .set(ADMIN_HEADERS);
+        .get('/api/profile/driver/performance-stats')
+        .set(DRIVER_HEADERS);
 
       expect(res.status).toBe(200);
-      expect(res.body.message).toBe('Cache invalidated for user driver-uuid-456.');
-      expect(invalidateCachedProfile).toHaveBeenCalledWith('firebase-driver-uid');
-      expect(invalidateCachedSupabaseProfile).toHaveBeenCalledWith('driver-uuid-456');
+      expect(res.body.totalDeliveries).toBe(0);
+      expect(res.body.totalDistanceKm).toBe(0);
+      expect(res.body.averageRating).toBeNull();
+      expect(res.body.onTimePercentage).toBeNull();
+      expect(res.body.lifetimeEarnings).toBe(0);
+      expect(res.body.achievementBadges).toEqual([]);
+      expect(res.body.insufficientData).toEqual({ distanceKm: false, rating: true, onTime: true });
+    });
+
+    it('does not count null distance/rating/on_time as real data', async () => {
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      m.store.orders.push(
+        {
+          id: 'order-incomplete',
+          driver_id: 'driver-uuid-456',
+          status: 'delivered',
+          distance_km: null,
+          customer_rating: null,
+          on_time: null,
+          base_freight: 1000,
+          created_at: `${currentMonth}-05T00:00:00Z`,
+        },
+        {
+          id: 'order-complete',
+          driver_id: 'driver-uuid-456',
+          status: 'payment_released',
+          distance_km: 10,
+          customer_rating: 5,
+          on_time: true,
+          base_freight: 2000,
+          created_at: `${currentMonth}-10T00:00:00Z`,
+        }
+      );
+
+      const res = await request(buildApp())
+        .get('/api/profile/driver/performance-stats')
+        .set(DRIVER_HEADERS);
+
+      expect(res.status).toBe(200);
+      expect(res.body.totalDeliveries).toBe(2);
+      expect(res.body.totalDistanceKm).toBe(10);
+      expect(res.body.averageRating).toBe(5);
+      expect(res.body.onTimePercentage).toBe(100);
+      expect(res.body.insufficientData).toEqual({ distanceKm: true, rating: false, onTime: false });
     });
   });
 });
