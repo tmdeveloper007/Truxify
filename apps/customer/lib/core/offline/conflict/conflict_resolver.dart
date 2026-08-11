@@ -1,13 +1,11 @@
 import '../models/trip_event.dart';
 
+/// Result of conflict resolution: events to sync and events to discard.
 class ConflictResolutionResult {
   final List<TripEvent> resolved;
-  final List<String> supersededIds;
+  final List<TripEvent> superseded;
 
-  ConflictResolutionResult({
-    required this.resolved,
-    required this.supersededIds,
-  });
+  ConflictResolutionResult({required this.resolved, required this.superseded});
 }
 
 class ConflictResolver {
@@ -26,12 +24,21 @@ class ConflictResolver {
   }
 
   List<TripEvent> resolve(List<TripEvent> events) {
+    return resolveWithSuperseded(events).resolved;
+  }
+
+  /// Resolve events and also return superseded/deduplicated events
+  /// so they can be deleted from the local database.
+  ConflictResolutionResult resolveWithSuperseded(List<TripEvent> events) {
     final sorted = List<TripEvent>.of(events)
       ..sort((a, b) => _compareTimestamp(a.occurredAt, b.occurredAt));
 
     final gpsByTrip = <String, TripEvent>{};
+    final supersededGps = <TripEvent>[];
     final otpByStop = <String, TripEvent>{};
+    final supersededOtp = <TripEvent>[];
     final stopByTripStop = <String, TripEvent>{};
+    final supersededStop = <TripEvent>[];
     final lifecycleByTrip = <String, TripEvent>{};
     final routeEvents = <TripEvent>[];
     final podByTrip = <String, TripEvent>{};
@@ -41,16 +48,25 @@ class ConflictResolver {
         case 'gpsUpdate':
           final current = gpsByTrip[event.tripId];
           if (current == null || _compareTimestamp(event.occurredAt, current.occurredAt) >= 0) {
+            if (current != null) supersededGps.add(current);
             gpsByTrip[event.tripId] = event;
+          } else {
+            supersededGps.add(event);
           }
           break;
         case 'otpDelivery':
           final key = '${event.tripId}:${event.payload['stopId']}';
-          otpByStop.putIfAbsent(key, () => event);
+          if (otpByStop.containsKey(key)) {
+            supersededOtp.add(otpByStop[key]!);
+          }
+          otpByStop[key] = event;
           break;
         case 'stopArrival':
           final key = '${event.tripId}:${event.payload['stopId']}';
-          stopByTripStop.putIfAbsent(key, () => event);
+          if (stopByTripStop.containsKey(key)) {
+            supersededStop.add(stopByTripStop[key]!);
+          }
+          stopByTripStop[key] = event;
           break;
         case 'podMetadata':
           final key = event.tripId;
@@ -70,6 +86,12 @@ class ConflictResolver {
       }
     }
 
+    final superseded = [
+      ...supersededGps,
+      ...supersededOtp,
+      ...supersededStop,
+    ];
+
     final resolved = <TripEvent>[
       ...gpsByTrip.values,
       ...otpByStop.values,
@@ -80,7 +102,7 @@ class ConflictResolver {
     ]
       ..sort((a, b) => _compareTimestamp(a.occurredAt, b.occurredAt));
 
-    return resolved;
+    return ConflictResolutionResult(resolved: resolved, superseded: superseded);
   }
 
   static int _compareTimestamp(String left, String right) {

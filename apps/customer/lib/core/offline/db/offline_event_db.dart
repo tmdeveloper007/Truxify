@@ -146,6 +146,28 @@ class OfflineEventDb {
     );
   }
 
+  /// Delete a superseded or deduplicated event from the database.
+  /// This prevents orphaned events from being re-fetched in every sync cycle.
+  Future<void> deleteEvent(String id) async {
+    final db = await open();
+    await db.delete(
+      _tableName,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Delete multiple superseded/deduplicated events in a single transaction.
+  Future<void> deleteEvents(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final db = await open();
+    final batch = db.batch();
+    for (final id in ids) {
+      batch.delete(_tableName, where: 'id = ?', whereArgs: [id]);
+    }
+    await batch.commit(noResult: true);
+  }
+
   Future<void> close() async {
     await _database?.close();
     _database = null;
