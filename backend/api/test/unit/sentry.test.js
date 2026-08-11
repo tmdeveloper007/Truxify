@@ -17,7 +17,6 @@ import {
   flushSentry,
   sentryErrorHandler,
   shouldIgnoreError,
-  captureDebugException,
 } from "../../src/middleware/sentry.js";
 
 vi.mock("../../src/middleware/logger.js", () => ({
