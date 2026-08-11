@@ -33,6 +33,12 @@ class _SettlementWalletScreenState extends State<SettlementWalletScreen> {
 
   Future<void> _processPayout(FreightSmartContract contract) async {
     if (contract.status == 'RELEASED') return;
+    if (!contract.isGeofenceConfirmed || !contract.isPodUploaded) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('PoD upload and GPS arrival required before payout.')),
+      );
+      return;
+    }
 
     // Enforce documented preconditions: GPS arrival AND PoD upload required before payout.
     if (!contract.isGeofenceConfirmed || !contract.isPodUploaded) {
@@ -48,10 +54,10 @@ class _SettlementWalletScreenState extends State<SettlementWalletScreen> {
       const SnackBar(content: Text('Verifying conditions and executing smart contract...')),
     );
 
-    final success = await _contractService.triggerPayout(contract.contractAddress);
+    final success = await _contractService.triggerPayout(contract.contractId);
     if (success && mounted) {
       setState(() {
-        _walletBalance += contract.escrowAmount;
+        _walletBalance += contract.payoutAmount;
         // Update local state to reflect released contract
         final index = _contracts.indexOf(contract);
         _contracts[index] = FreightSmartContract(
@@ -69,7 +75,7 @@ class _SettlementWalletScreenState extends State<SettlementWalletScreen> {
         );
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('\$${contract.escrowAmount} released to wallet instantly!')),
+        SnackBar(content: Text('\$${contract.payoutAmount} released to wallet instantly!')),
       );
     }
   }
@@ -118,7 +124,6 @@ class _SettlementWalletScreenState extends State<SettlementWalletScreen> {
                   itemCount: _contracts.length,
                   itemBuilder: (context, index) {
                     final contract = _contracts[index];
-                    final isReady = contract.isGeofenceConfirmed && !contract.isPodUploaded; // Simplified logic for mock UI
                     final isReleased = contract.status == 'RELEASED';
 
                     return Card(
@@ -132,7 +137,7 @@ class _SettlementWalletScreenState extends State<SettlementWalletScreen> {
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text('Load: ${contract.loadId}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                Text('\$${contract.escrowAmount.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.green)),
+                                Text('\$${contract.payoutAmount.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.green)),
                               ],
                             ),
                             const SizedBox(height: 12),
@@ -156,7 +161,7 @@ class _SettlementWalletScreenState extends State<SettlementWalletScreen> {
                                   backgroundColor: isReleased ? Colors.grey[300] : Colors.blueAccent,
                                   foregroundColor: isReleased ? Colors.grey[600] : Colors.white,
                                 ),
-                                child: Text(isReleased ? 'FUNDS RELEASED' : 'UPLOAD POD & TRIGGER PAYOUT'),
+                                child: Text(isReleased ? 'FUNDS RELEASED' : 'TRIGGER PAYOUT'),
                               ),
                             )
                           ],
