@@ -198,6 +198,10 @@ class _OrdersScreenState extends State<OrdersScreen>
               isStackable: order['is_stackable'] as bool?,
               isFragile: order['is_fragile'] as bool?,
               specialRequirements: order['special_requirements']?.toString(),
+              pickupLat: (order['pickup_lat'] as num?)?.toDouble(),
+              pickupLng: (order['pickup_lng'] as num?)?.toDouble(),
+              dropLat: (order['drop_lat'] as num?)?.toDouble(),
+              dropLng: (order['drop_lng'] as num?)?.toDouble(),
             );
           }).toList();
         });
@@ -436,6 +440,8 @@ class _OrdersScreenState extends State<OrdersScreen>
         // Default 'Newest'
         return dateB.compareTo(dateA);
       }
+      // Default 'Newest'
+      return dateB.compareTo(dateA);
     });
 
     return filtered;
