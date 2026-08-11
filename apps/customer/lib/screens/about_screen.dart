@@ -23,7 +23,7 @@ class AboutScreen extends StatelessWidget {
                 width: 100,
                 height: 100,
                 decoration: BoxDecoration(
-                  color: colorScheme.primary.withOpacity(0.15),
+                  color: colorScheme.primary.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Icon(
@@ -49,7 +49,7 @@ class AboutScreen extends StatelessWidget {
                   Text(
                     'Version 1.0.0',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.onSurface.withOpacity(0.6),
+                          color: colorScheme.onSurface.withValues(alpha: 0.6),
                         ),
                   ),
                 ],
@@ -78,7 +78,7 @@ class AboutScreen extends StatelessWidget {
                   Text(
                     'Truxify is a modern freight management platform connecting shippers with verified truck owners. We simplify logistics with real-time tracking, transparent pricing, and reliable service.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurface.withOpacity(0.6),
+                          color: colorScheme.onSurface.withValues(alpha: 0.6),
                           height: 1.6,
                         ),
                   ),
@@ -108,7 +108,7 @@ class AboutScreen extends StatelessWidget {
                   Text(
                     'To revolutionize the logistics industry by making freight transportation safe, affordable, and sustainable for everyone.',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurface.withOpacity(0.6),
+                          color: colorScheme.onSurface.withValues(alpha: 0.6),
                           height: 1.6,
                         ),
                   ),
@@ -127,19 +127,19 @@ class AboutScreen extends StatelessWidget {
 
             const SizedBox(height: 12),
 
-            _ContactRow(
+            const _ContactRow(
               icon: Icons.email_rounded,
               label: 'Email',
               value: 'support@truxify.com',
             ),
             const SizedBox(height: 12),
-            _ContactRow(
+            const _ContactRow(
               icon: Icons.phone_rounded,
               label: 'Phone',
               value: '+91 1800-TRUCK-1',
             ),
             const SizedBox(height: 12),
-            _ContactRow(
+            const _ContactRow(
               icon: Icons.public_rounded,
               label: 'Website',
               value: 'www.truxify.com',
@@ -164,7 +164,7 @@ class AboutScreen extends StatelessWidget {
               child: Text(
                 '© 2024 Truxify. All rights reserved.',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: colorScheme.onSurface.withOpacity(0.6),
+                      color: colorScheme.onSurface.withValues(alpha: 0.6),
                     ),
               ),
             ),
@@ -177,6 +177,7 @@ class AboutScreen extends StatelessWidget {
 
 class _ContactRow extends StatelessWidget {
   const _ContactRow({
+    super.key,
     required this.icon,
     required this.label,
     required this.value,
@@ -196,7 +197,7 @@ class _ContactRow extends StatelessWidget {
           width: 40,
           height: 40,
           decoration: BoxDecoration(
-            color: colorScheme.primary.withOpacity(0.15),
+            color: colorScheme.primary.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(icon, color: colorScheme.primary, size: 18),
@@ -209,7 +210,7 @@ class _ContactRow extends StatelessWidget {
               Text(
                 label,
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: colorScheme.onSurface.withOpacity(0.6),
+                      color: colorScheme.onSurface.withValues(alpha: 0.6),
                     ),
               ),
               const SizedBox(height: 2),
@@ -228,7 +229,7 @@ class _ContactRow extends StatelessWidget {
 }
 
 class _SocialIcon extends StatelessWidget {
-  const _SocialIcon({required this.icon});
+  const _SocialIcon({super.key, required this.icon});
 
   final IconData icon;
 
@@ -240,7 +241,7 @@ class _SocialIcon extends StatelessWidget {
       width: 40,
       height: 40,
       decoration: BoxDecoration(
-        color: colorScheme.primary.withOpacity(0.15),
+        color: colorScheme.primary.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Icon(icon, color: colorScheme.primary, size: 18),

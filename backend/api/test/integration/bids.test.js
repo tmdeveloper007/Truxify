@@ -7,23 +7,30 @@ const m = createSupabaseMock();
 
 vi.mock('../../src/config/db.js', () => ({
   supabase: m.supabase,
+  createUserClient: () => m.supabase,
   firebaseAdmin: null,
   redisClient: null,
   mongoDb: null,
 }));
 
-vi.mock('../../src/services/escrow.js', () => ({
-  buildDepositTx: vi.fn(),
-  recordDepositTx: vi.fn(),
-  escrowRelease: vi.fn(),
-  escrowRefund: vi.fn(),
-  // Mirrors the real implementation's escrow:<id> booking id derivation
-  bookingIdFromUuid: vi.fn((orderId) => `escrow:${orderId}`),
-  ESCROW_MATIC_PER_PAISA: 0.01,
-}));
+vi.mock('../../src/services/escrow.js', async () => {
+  const actual = await vi.importActual('../../src/services/escrow.js');
+  return {
+    ...actual,
+    buildDepositTx: vi.fn(),
+    recordDepositTx: vi.fn(),
+    escrowDeposit: vi.fn(),
+    escrowRelease: vi.fn(),
+    submitEscrowRefund: vi.fn(),
+    submitEscrowRefund: vi.fn(),
+    confirmEscrowRefund: vi.fn(),
+    // Mirrors the real implementation's escrow:<id> booking id derivation
+    getEscrowBookingId: vi.fn((orderId) => `escrow:${orderId}`),
+  };
+});
 
 const { default: orderRouter } = await import('../../src/routes/orderRoutes.js');
-const { buildDepositTx: mockBuildDepositTx, recordDepositTx: mockRecordDepositTx, escrowRefund: mockEscrowRefund } = await import('../../src/services/escrow.js');
+const { buildDepositTx: mockBuildDepositTx, recordDepositTx: mockRecordDepositTx, escrowDeposit: mockEscrowDeposit, submitEscrowRefund: mockEscrowRefund } = await import('../../src/services/escrow.js');
 
 function buildApp() {
   const app = express();
@@ -35,11 +42,13 @@ function buildApp() {
 const CUSTOMER = {
   'x-user-id': 'customer-1',
   'x-user-role': 'customer',
+  'x-dev-access-token': 'test-dev-token-123',
 };
 
 const DRIVER = {
   'x-user-id': 'driver-1',
   'x-user-role': 'driver',
+  'x-dev-access-token': 'test-dev-token-123',
 };
 
 describe('Bid Routes', () => {
@@ -54,14 +63,8 @@ describe('Bid Routes', () => {
     mockBuildDepositTx.mockReset();
     mockRecordDepositTx.mockReset();
     mockEscrowRefund.mockReset();
-    mockBuildDepositTx.mockResolvedValue({
-      txData: {
-        to: '0x0000000000000000000000000000000000000000',
-        data: '0x',
-        value: '0x0',
-      },
-      bookingId: 'escrow:MOCK',
-    });
+    mockEscrowDeposit.mockResolvedValue({ txHash: '0xdefaultescrow' });
+    mockEscrowRefund.mockResolvedValue({ txHash: '0xdefaultrefund' });
   });
 
   it('POST /:id/bids rejects invalid amount', async () => {
@@ -282,7 +285,7 @@ describe('Bid Routes', () => {
   });
 
   it('POST /:id/bids/:bidId/accept executes RPC', async () => {
-    mockBuildDepositTx.mockResolvedValue({ txData: '0xdeadbeef' });
+    mockBuildDepositTx.mockResolvedValue({ to: '0xescrow', data: '0xdeadbeef' });
 
     m.store.orders.push({
       id: 'order-1',
@@ -333,12 +336,13 @@ describe('Bid Routes', () => {
   });
 
   it('POST /:id/bids/:bidId/accept triggers escrow deposit when wallet addresses present', async () => {
-    mockBuildDepositTx.mockResolvedValue({ txData: '0xdeadbeef', bookingId: 'escrow:MOCK' });
+    mockBuildDepositTx.mockResolvedValue({ to: '0xescrow', data: '0xdeadbeef', bookingId: 'escrow:OD-ESCROW' });
 
     m.store.orders.push({
       id: 'order-escrow',
       customer_id: 'customer-1',
       order_display_id: 'OD-ESCROW',
+      version: 1,
     });
 
     m.store.load_offers.push({
@@ -622,7 +626,7 @@ describe('Bid Routes', () => {
     expect(res.status).toBe(403);
   });
 
-  it('POST /:id/bids/:bidId/accept returns 500 when load offer is already claimed', async () => {
+  it('POST /:id/bids/:bidId/accept returns 409 when load offer is no longer available', async () => {
     m.store.orders.push({
       id: 'order-1',
       customer_id: 'customer-1',
@@ -645,11 +649,11 @@ describe('Bid Routes', () => {
     });
 
     m.store.profiles.push(
-      { id: 'customer-1', full_name: 'Customer One', polygon_wallet_address: '0xCustomerWallet' },
-      { id: 'driver-1', full_name: 'Driver One' },
+      { id: 'customer-1', full_name: 'Customer One', polygon_wallet_address: '0x1234567890abcdef1234567890abcdef12345678' },
+      { id: 'driver-1', full_name: 'Driver One' }
     );
-    m.store.driver_details.push({ user_id: 'driver-1', rating: 4.9, truck_id: null, polygon_wallet_address: '0xDriverWallet' });
-    mockBuildDepositTx.mockResolvedValue({ txData: '0xdeadbeef' });
+    m.store.driver_details.push({ user_id: 'driver-1', rating: 4.9, truck_id: null, polygon_wallet_address: '0xAbcdef1234567890Abcdef1234567890Abcdef12' });
+
     m.programRpcError('Load offer is no longer available');
 
     const app = buildApp();
@@ -657,12 +661,13 @@ describe('Bid Routes', () => {
       .post('/api/orders/order-1/bids/bid-1/accept')
       .set(CUSTOMER);
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('Conflict: This load offer was already accepted or is no longer available.');
     expect(res.body.details).toBe('Load offer is no longer available');
     expect(m.calls.find(c => c.rpc === 'accept_bid_tx')).toBeTruthy();
   });
 
-  it('POST /:id/bids/:bidId/accept returns 500 when order is no longer pending', async () => {
+  it('POST /:id/bids/:bidId/accept returns 409 when order is no longer pending', async () => {
     m.store.orders.push({
       id: 'order-1',
       customer_id: 'customer-1',
@@ -685,17 +690,18 @@ describe('Bid Routes', () => {
     });
 
     m.store.profiles.push(
-      { id: 'customer-1', full_name: 'Customer One', polygon_wallet_address: '0xCustomerWallet' },
-      { id: 'driver-1', full_name: 'Driver One' },
+      { id: 'customer-1', full_name: 'Customer One', polygon_wallet_address: '0x1234567890abcdef1234567890abcdef12345678' },
+      { id: 'driver-1', full_name: 'Driver One' }
     );
-    m.store.driver_details.push({ user_id: 'driver-1', rating: 4.9, truck_id: null, polygon_wallet_address: '0xDriverWallet' });
-    mockBuildDepositTx.mockResolvedValue({ txData: '0xdeadbeef' });
+    m.store.driver_details.push({ user_id: 'driver-1', rating: 4.9, truck_id: null, polygon_wallet_address: '0xAbcdef1234567890Abcdef1234567890Abcdef12' });
+
     m.programRpcError('Order is no longer pending');
 
     const app = buildApp();
     const res = await request(app).post('/api/orders/order-1/bids/bid-1/accept').set(CUSTOMER);
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('Conflict: This load offer was already accepted or is no longer available.');
     expect(res.body.details).toBe('Order is no longer pending');
     expect(m.calls.find(c => c.rpc === 'accept_bid_tx')).toBeTruthy();
   });  
@@ -727,6 +733,30 @@ describe('Bid Routes', () => {
       expect(res.body.error).toBe('Order is not in funding state');
     });
 
+    it('POST /:id/confirm-deposit returns 409 for an order cancelled in funding state', async () => {
+      m.store.orders.push({
+        id: 'order-1',
+        customer_id: 'customer-1',
+        order_display_id: 'OD1',
+        status: 'cancelled',
+        escrow_booking_id: 'escrow:OD1',
+        escrow_status: 'funding',
+      });
+
+      const app = buildApp();
+      const res = await request(app)
+        .post('/api/orders/order-1/confirm-deposit')
+        .set(CUSTOMER)
+        .send({ txHash: '0x' + '1'.repeat(64) });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe('Order is already cancelled. Cannot confirm deposit.');
+
+      const order = m.store.orders.find(o => o.id === 'order-1');
+      expect(order.escrow_status).toBe('funding');
+      expect(mockRecordDepositTx).not.toHaveBeenCalled();
+    });
+
     it('POST /:id/confirm-deposit returns 422 if recordDepositTx fails', async () => {
       m.store.orders.push({
         id: 'order-1',
@@ -746,7 +776,32 @@ describe('Bid Routes', () => {
 
       expect(res.status).toBe(422);
       expect(res.body.error).toBe('Transaction reverted or not found on chain');
-      expect(mockRecordDepositTx).toHaveBeenCalledWith('escrow:OD1', '0x' + '1'.repeat(64), null);
+      expect(mockRecordDepositTx).toHaveBeenCalledWith('escrow:OD1', '0x' + '1'.repeat(64), null, null, null);
+    });
+
+    it('POST /:id/confirm-deposit hashes the order display id when escrow_booking_id is missing', async () => {
+      m.store.orders.push({
+        id: 'order-1',
+        customer_id: 'customer-1',
+        order_display_id: 'OD1',
+        escrow_booking_id: null,
+        escrow_status: 'funding',
+      });
+
+      const { getEscrowBookingId } = await import('../../src/services/escrow.js');
+
+      mockRecordDepositTx.mockResolvedValue({ txHash: '0x' + '1'.repeat(64), bookingId: 'x' });
+
+      const app = buildApp();
+      const res = await request(app)
+        .post('/api/orders/order-1/confirm-deposit')
+        .set(CUSTOMER)
+        .send({ txHash: '0x' + '1'.repeat(64) });
+
+      expect(res.status).toBe(200);
+      // The fallback must be the deterministic hash, NOT a raw `escrow:OD1` string
+      expect(mockRecordDepositTx).toHaveBeenCalledWith(getEscrowBookingId('OD1'), '0x' + '1'.repeat(64), null, null, null);
+      expect(mockRecordDepositTx.mock.calls[0][0]).not.toBe('escrow:OD1');
     });
 
     it('POST /:id/confirm-deposit succeeds and marks order as funded', async () => {
@@ -775,6 +830,85 @@ describe('Bid Routes', () => {
       expect(order.escrow_status).toBe('funded');
       expect(order.deposit_tx_hash).toBe(expectedTx);
       expect(order.escrow_deposited_at).toBeDefined();
+    });
+
+    it('POST /:id/confirm-deposit keeps the escrow booking when accept_bid_tx AND the refund both fail', async () => {
+      m.store.orders.push({
+        id: 'order-1',
+        customer_id: 'customer-1',
+        order_display_id: 'OD1',
+        escrow_booking_id: 'escrow:OD1',
+        escrow_status: 'funding',
+        pending_bid_acceptance: {
+          bid_id: 'bid-1',
+          load_id: 'load-1',
+          driver_id: 'driver-1',
+          truck_id: 'truck-1',
+          driver_name: 'Driver One',
+          driver_rating: 4.9,
+          truck_number: 'TRK-1',
+          bid_amount: 50000,
+          order_display_id: 'OD1',
+          version: 1,
+        },
+      });
+
+      mockRecordDepositTx.mockResolvedValue({ txHash: '0x' + '1'.repeat(64), bookingId: 'escrow:OD1' });
+      mockEscrowRefund.mockResolvedValue({ txHash: null, bookingId: 'escrow:OD1', error: 'chain RPC down' });
+      m.programRpcError('accept_bid_tx failed');
+
+      const app = buildApp();
+      const res = await request(app)
+        .post('/api/orders/order-1/confirm-deposit')
+        .set(CUSTOMER)
+        .send({ txHash: '0x' + '1'.repeat(64) });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatch(/refund is pending/i);
+
+      const order = m.store.orders.find(o => o.id === 'order-1');
+      expect(order.escrow_booking_id).toBe('escrow:OD1');
+      expect(order.escrow_status).toBe('funding');
+    });
+
+    it('POST /:id/confirm-deposit reverts escrow only after a successful refund when accept_bid_tx fails', async () => {
+      m.store.orders.push({
+        id: 'order-1',
+        customer_id: 'customer-1',
+        order_display_id: 'OD1',
+        escrow_booking_id: 'escrow:OD1',
+        escrow_status: 'funding',
+        pending_bid_acceptance: {
+          bid_id: 'bid-1',
+          load_id: 'load-1',
+          driver_id: 'driver-1',
+          truck_id: 'truck-1',
+          driver_name: 'Driver One',
+          driver_rating: 4.9,
+          truck_number: 'TRK-1',
+          bid_amount: 50000,
+          order_display_id: 'OD1',
+          version: 1,
+        },
+      });
+
+      mockRecordDepositTx.mockResolvedValue({ txHash: '0x' + '1'.repeat(64), bookingId: 'escrow:OD1' });
+      mockEscrowRefund.mockResolvedValue({ txHash: '0x' + 'a'.repeat(64) });
+      m.programRpcError('accept_bid_tx failed');
+
+      const app = buildApp();
+      const res = await request(app)
+        .post('/api/orders/order-1/confirm-deposit')
+        .set(CUSTOMER)
+        .send({ txHash: '0x' + '1'.repeat(64) });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toMatch(/has been refunded/i);
+      expect(mockEscrowRefund).toHaveBeenCalledWith('OD1');
+
+      const order = m.store.orders.find(o => o.id === 'order-1');
+      expect(order.escrow_booking_id).toBeNull();
+      expect(order.escrow_status).toBe('pending');
     });
   });
 });

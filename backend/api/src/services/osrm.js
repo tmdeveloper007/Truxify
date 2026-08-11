@@ -1,5 +1,20 @@
 import { redisClient } from '../config/db.js';
 import logger from '../middleware/logger.js';
+import CircuitBreaker from 'opossum';
+import { measureExecution } from '../core/performanceMetrics.js';
+
+export const osrmBreaker = new CircuitBreaker(async (url, options) => {
+  const response = await fetch(url, options);
+  if (response.status >= 500) {
+    await response.text().catch(err => logger.warn('[OSRM] Failed to read error body:', err?.message));
+    throw new Error(`[OSRM] Request failed (${response.status})`);
+  }
+  return response;
+}, {
+  timeout: 5000,
+  errorThresholdPercentage: 50,
+  resetTimeout: 30000
+});
 
 const DEFAULT_OSRM_BASE_URL = 'https://router.project-osrm.org';
 const DEFAULT_TIMEOUT_MS = 1500;
@@ -7,6 +22,19 @@ const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_BASE_DELAY_MS = 500;
 const CACHE_TTL_SECONDS = 86400;
 const ROUTE_CACHE_TTL_SECONDS = 30;
+
+export const validateCoordinates = (pickupLat, pickupLng, dropLat, dropLng) => {
+  if (!Number.isFinite(pickupLat) || !Number.isFinite(pickupLng) || 
+      !Number.isFinite(dropLat) || !Number.isFinite(dropLng)) {
+    return 'Invalid coordinates provided.';
+  }
+  if (pickupLat < -90 || pickupLat > 90) return 'pickup_lat must be between -90 and 90.';
+  if (pickupLng < -180 || pickupLng > 180) return 'pickup_lng must be between -180 and 180.';
+  if (dropLat < -90 || dropLat > 90) return 'drop_lat must be between -90 and 90.';
+  if (dropLng < -180 || dropLng > 180) return 'drop_lng must be between -180 and 180.';
+  
+  return null;
+};
 
 function parsePositiveNumber(value, fallback) {
   const parsed = Number(value);
@@ -24,11 +52,12 @@ function buildRouteUrl({ pickupLat, pickupLng, dropLat, dropLng }) {
 }
 
 function buildCacheKey({ pickupLat, pickupLng, dropLat, dropLng }) {
-  const r = (n) => Number(n.toFixed(6));
+  const r = (n) => Number(n.toFixed(8));
   return `osrm:route:v2:${r(pickupLat)}:${r(pickupLng)}:${r(dropLat)}:${r(dropLng)}`;
 }
 
 export async function getRouteEstimate({ pickupLat, pickupLng, dropLat, dropLng } = {}) {
+  return measureExecution('OSRMService.getRouteEstimate', async () => {
   if (
     !Number.isFinite(pickupLat) || !Number.isFinite(pickupLng) ||
     !Number.isFinite(dropLat) || !Number.isFinite(dropLng)
@@ -41,9 +70,15 @@ export async function getRouteEstimate({ pickupLat, pickupLng, dropLat, dropLng 
   if (redisClient) {
     try {
       const cached = await redisClient.get(cacheKey);
-      if (cached) return JSON.parse(cached);
+      // Only return cached result if it is a valid object.
+      // Stale null results (from transient failures) must not be served
+      // from cache — the next call should retry the OSRM API.
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed !== null) return parsed;
+      }
     } catch (err) {
-      logger.error('[osrm] Redis get error:', err.message);
+      logger.error({ event: 'OSRM_REDIS_GET_ERROR', error: err && err.message }, '[osrm] Redis get error');
     }
   }
 
@@ -56,12 +91,13 @@ export async function getRouteEstimate({ pickupLat, pickupLng, dropLat, dropLng 
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const response = await fetch(buildRouteUrl({ pickupLat, pickupLng, dropLat, dropLng }), {
+      const response = await osrmBreaker.fire(buildRouteUrl({ pickupLat, pickupLng, dropLat, dropLng }), {
         signal: controller.signal,
       });
 
       if (!response.ok) {
         clearTimeout(timeout);
+        await response.text().catch(err => logger.warn('[OSRM] Failed to read error body:', err?.message));
         if (response.status >= 500 && attempt < maxRetries - 1) {
           logger.warn({ status: response.status, attempt: attempt + 1, maxRetries }, 'Server error. Retrying...');
           await new Promise(r => setTimeout(r, baseDelayMs * Math.pow(2, attempt)));
@@ -86,7 +122,7 @@ export async function getRouteEstimate({ pickupLat, pickupLng, dropLat, dropLng 
         try {
           await redisClient.set(cacheKey, JSON.stringify(result), 'EX', CACHE_TTL_SECONDS);
         } catch (err) {
-          logger.error('[osrm] Redis set error:', err.message);
+          logger.error({ event: 'OSRM_REDIS_SET_ERROR', error: err && err.message }, '[osrm] Redis set error');
         }
       }
 
@@ -97,6 +133,10 @@ export async function getRouteEstimate({ pickupLat, pickupLng, dropLat, dropLng 
       clearTimeout(timeout);
       if (attempt < maxRetries - 1) {
         const delayMs = baseDelayMs * Math.pow(2, attempt);
+        if (err.code === 'EOPENBREAKER' || err.message?.includes('Breaker is open')) {
+          logger.warn('[OSRM] Circuit is open. Falling back instantly.');
+          return null; // Return null so caller knows to use straight-line fallback
+        }
         logger.warn({ attempt: attempt + 1, maxRetries, errMessage: err.message, delayMs }, 'Fetch error. Retrying...');
         await new Promise(r => setTimeout(r, delayMs));
       } else {
@@ -107,6 +147,7 @@ export async function getRouteEstimate({ pickupLat, pickupLng, dropLat, dropLng 
   }
 
   return null;
+  });
 }
 
 function buildGeometryUrl({ originLat, originLng, destLat, destLng }) {
@@ -126,6 +167,7 @@ function buildGeometryCacheKey({ originLat, originLng, destLat, destLng }) {
 }
 
 export async function getRouteGeometry({ originLat, originLng, destLat, destLng } = {}) {
+  return measureExecution('OSRMService.getRouteGeometry', async () => {
   if (
     !Number.isFinite(originLat) || !Number.isFinite(originLng) ||
     !Number.isFinite(destLat) || !Number.isFinite(destLng)
@@ -138,9 +180,15 @@ export async function getRouteGeometry({ originLat, originLng, destLat, destLng 
   if (redisClient) {
     try {
       const cached = await redisClient.get(cacheKey);
-      if (cached) return JSON.parse(cached);
+      // Only return cached result if it is a valid object.
+      // Stale null results (from transient failures) must not be served
+      // from cache — the next call should retry the OSRM API.
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed !== null) return parsed;
+      }
     } catch (err) {
-      logger.error('[osrm] Redis get error (geometry):', err.message);
+      logger.error({ event: 'OSRM_REDIS_GET_GEOMETRY_ERROR', error: err && err.message }, '[osrm] Redis get error (geometry)');
     }
   }
 
@@ -149,11 +197,14 @@ export async function getRouteGeometry({ originLat, originLng, destLat, destLng 
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(
+    const response = await osrmBreaker.fire(
       buildGeometryUrl({ originLat, originLng, destLat, destLng }),
       { signal: controller.signal },
     );
-    if (!response.ok) return null;
+    if (!response.ok) {
+      await response.text().catch(err => logger.warn('[OSRM] Failed to read error body:', err?.message));
+      return null;
+    }
 
     const payload = await response.json();
     const route = Array.isArray(payload?.routes) ? payload.routes[0] : null;
@@ -178,17 +229,22 @@ export async function getRouteGeometry({ originLat, originLng, destLat, destLng 
       try {
         await redisClient.set(cacheKey, JSON.stringify(feature), 'EX', ROUTE_CACHE_TTL_SECONDS);
       } catch (err) {
-        logger.error('[osrm] Redis set error (geometry):', err.message);
+        logger.error({ event: 'OSRM_REDIS_SET_GEOMETRY_ERROR', error: err && err.message }, '[osrm] Redis set error (geometry)');
       }
     }
     return feature;
 
   } catch (err) {
-    logger.error('[osrm] Fetch error (geometry):', err.message);
+    if (err.code === 'EOPENBREAKER' || err.message?.includes('Breaker is open')) {
+      logger.warn('[OSRM] Circuit is open during geometry fetch. Falling back.');
+      return null;
+    }
+    logger.error({ errMessage: err.message, stack: err.stack }, '[OSRM] Failed to fetch route geometry');
     return null;
   } finally {
     clearTimeout(timeout);
   }
+  });
 }
 
 export function buildStraightLineGeometry({ originLat, originLng, destLat, destLng } = {}) {
