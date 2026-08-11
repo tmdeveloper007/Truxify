@@ -85,13 +85,14 @@ class SyncEngine {
       return 0;
     }
 
-    final resolution = resolver.resolveWithDetails(eligible);
+    final resolution = resolver.resolveWithSuperseded(eligible);
     final resolved = resolution.resolved;
-    final supersededIds = resolution.supersededIds;
+    final superseded = resolution.superseded;
 
-    // Clear superseded/deduplicated event IDs from SQLite to prevent orphan pending queue loops
-    for (final id in supersededIds) {
-      await db.markSynced(id);
+    // Delete superseded/deduplicated events so they are never re-processed.
+    if (superseded.isNotEmpty) {
+      await db.deleteEvents(superseded.map((e) => e.id).toList());
+      developer.log('[SyncEngine] Deleted ${superseded.length} superseded offline event(s) after conflict resolution.');
     }
 
     if (resolved.isEmpty) {
