@@ -469,7 +469,7 @@ async function authenticateWs(ws, token) {
     try {
       decoded = jwt.decode(token);
     } catch (err) {
-      // ignore decoding errors
+      logger.warn({ err }, '[Tracker] JWT decode failed for token:', token?.substring(0, 8) + '...');
     }
 
     const isSupabaseToken = decoded &&
