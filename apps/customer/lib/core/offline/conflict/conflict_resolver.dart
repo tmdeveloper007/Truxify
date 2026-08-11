@@ -9,6 +9,20 @@ class ConflictResolutionResult {
 }
 
 class ConflictResolver {
+  ConflictResolutionResult resolveWithDetails(List<TripEvent> events) {
+    final resolved = resolve(events);
+    final resolvedIds = resolved.map((e) => e.id).toSet();
+    final supersededIds = events
+        .map((e) => e.id)
+        .where((id) => !resolvedIds.contains(id))
+        .toList();
+
+    return ConflictResolutionResult(
+      resolved: resolved,
+      supersededIds: supersededIds,
+    );
+  }
+
   List<TripEvent> resolve(List<TripEvent> events) {
     return resolveWithSuperseded(events).resolved;
   }
