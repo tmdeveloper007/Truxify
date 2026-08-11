@@ -1,0 +1,33 @@
+name: Auto Resolve Merge Conflicts
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  resolve-conflicts:
+    name: Resolve PR Merge Conflicts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          repository: tmdeveloper007/Truxify
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "truxify-cron"
+          git config --global user.email "truxify-cron@users.noreply.github.com"
+
+      - name: Resolve conflicts via Python
+        run: python3 .github/scripts/resolve_conflicts.py
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
