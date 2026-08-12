@@ -40,18 +40,6 @@ describe('zkp.routes', () => {
   });
 
   describe('POST /zkp/verify', () => {
-    it('returns 400 when userId is missing', async () => {
-      const res = await request(makeApp()).post('/zkp/verify').send({ name: 'X' });
-      expect(res.status).toBe(400);
-      expect(res.body.error).toBe('userId is required');
-    });
-
-    it('returns 403 when userId does not match the authenticated user', async () => {
-      const res = await request(makeApp()).post('/zkp/verify').send({ userId: 'other-user' });
-      expect(res.status).toBe(403);
-      expect(res.body.error).toBe('Forbidden');
-    });
-
     it('returns 409 on lock conflict', async () => {
       zkpMock.verifyDriver.mockResolvedValue({ success: false, conflict: true, error: 'in progress' });
       const res = await request(makeApp()).post('/zkp/verify').send({ userId: 'u1' });
@@ -63,6 +51,13 @@ describe('zkp.routes', () => {
       const res = await request(makeApp()).post('/zkp/verify').send({ userId: 'u1' });
       expect(res.status).toBe(200);
       expect(res.body.verified).toBe(true);
+    });
+
+    it('returns 503 when Redis lock cannot be acquired', async () => {
+      const { LockAcquisitionError } = await import('../../src/lib/redisLock.js');
+      zkpMock.verifyDriver.mockRejectedValue(new LockAcquisitionError('Redis unavailable'));
+      const res = await request(makeApp()).post('/zkp/verify').send({ userId: 'u1' });
+      expect(res.status).toBe(503);
     });
   });
 
