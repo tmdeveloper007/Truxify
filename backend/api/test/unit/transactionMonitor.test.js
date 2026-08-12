@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 const mockTransaction = {
   startChild: vi.fn(() => ({ setStatus: vi.fn(), finish: vi.fn() })),
@@ -28,6 +28,8 @@ const mockSentry = vi.hoisted(() => ({
 vi.mock('@sentry/node', () => mockSentry);
 vi.mock('../../src/middleware/logger.js', () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+  logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+  LOG_LEVELS: {},
 }));
 
 import TransactionMonitor from '../../src/services/monitoring/transactionMonitor.js';
@@ -35,8 +37,13 @@ import TransactionMonitor from '../../src/services/monitoring/transactionMonitor
 describe('TransactionMonitor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
     TransactionMonitor.initialized = false;
     mockSentry.startTransaction.mockReturnValue(mockTransaction);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('initialize', () => {
@@ -100,6 +107,34 @@ describe('TransactionMonitor', () => {
         category: 'custom',
         level: 'info',
       }));
+    });
+  });
+
+  describe('monitorQuery', () => {
+    it('does not throw when query is null', async () => {
+      const fn = vi.fn().mockResolvedValue([{ id: 1 }]);
+      await expect(TransactionMonitor.monitorQuery(null, fn)).resolves.toEqual([{ id: 1 }]);
+    });
+
+    it('does not throw when query is undefined', async () => {
+      const fn = vi.fn().mockResolvedValue([{ id: 1 }]);
+      await expect(TransactionMonitor.monitorQuery(undefined, fn)).resolves.toEqual([{ id: 1 }]);
+    });
+
+    it('logs slow query warning with truncated query string', async () => {
+      const { default: logger } = await import('../../src/middleware/logger.js');
+      const fn = vi.fn().mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 120));
+        return [{ id: 1 }];
+      });
+      const query = 'SELECT * FROM orders WHERE id > 1000';
+      await TransactionMonitor.monitorQuery(query, fn);
+      expect(logger.warn).toHaveBeenCalled();
+    });
+
+    it('returns the fn result when query is a string', async () => {
+      const fn = vi.fn().mockResolvedValue([{ id: 1 }]);
+      await expect(TransactionMonitor.monitorQuery('SELECT 1', fn)).resolves.toEqual([{ id: 1 }]);
     });
   });
 });
