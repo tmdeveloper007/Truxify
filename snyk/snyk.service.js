@@ -7,6 +7,29 @@ import logger from '../backend/api/src/middleware/logger.js';
 
 const execAsync = promisify(exec);
 
+/**
+ * Run a Snyk CLI command and return stdout/stderr, treating exit code 1
+ * (vulnerabilities found) as a successful scan result rather than a failure.
+ * Only exit code 2 (real errors) cause rejection.
+ */
+function runSnykCommand(command, options = {}) {
+  return new Promise((resolve, reject) => {
+    exec(command, options, (error, stdout, stderr) => {
+      if (error) {
+        const code = error.code;
+        if (code === 2) {
+          // Genuine error (network, auth, etc.)
+          return reject(new Error(stderr || error.message));
+        }
+        // code 1 means vulnerabilities were found — stdout contains the JSON report
+        resolve({ stdout, stderr, code });
+      } else {
+        resolve({ stdout, stderr, code: 0 });
+      }
+    });
+  });
+}
+
 class SnykService {
     constructor() {
         this.snykToken = process.env.SNYK_TOKEN;
@@ -36,20 +59,20 @@ class SnykService {
         try {
             const safePath = this._sanitizePath(projectPath);
             const command = `snyk test --severity-threshold=high --json`;
-            const { stdout, stderr } = await execAsync(command, { cwd: safePath });
-            
+            const { stdout, stderr } = await runSnykCommand(command, { cwd: safePath });
+
             if (stderr && !stderr.includes('WARNING')) {
                 logger.error('Dependency scan error:', stderr);
                 return { success: false, error: stderr };
             }
-            
+
             const results = JSON.parse(stdout);
             this.scanResults.push({
                 type: 'dependencies',
                 timestamp: new Date().toISOString(),
                 results
             });
-            
+
             return {
                 success: true,
                 data: results,
@@ -65,13 +88,13 @@ class SnykService {
         try {
             const safeImage = this._sanitizeImage(image);
             const command = `snyk container test ${safeImage} --severity-threshold=high --json`;
-            const { stdout, stderr } = await execAsync(command);
-            
+            const { stdout, stderr } = await runSnykCommand(command);
+
             if (stderr && !stderr.includes('WARNING')) {
                 logger.error('Container scan error:', stderr);
                 return { success: false, error: stderr };
             }
-            
+
             const results = JSON.parse(stdout);
             this.scanResults.push({
                 type: 'container',
@@ -79,7 +102,7 @@ class SnykService {
                 timestamp: new Date().toISOString(),
                 results
             });
-            
+
             return {
                 success: true,
                 data: results,
@@ -95,13 +118,13 @@ class SnykService {
         try {
             const safePath = this._sanitizePath(inputPath);
             const command = `snyk iac test ${safePath} --severity-threshold=high --json`;
-            const { stdout, stderr } = await execAsync(command);
-            
+            const { stdout, stderr } = await runSnykCommand(command);
+
             if (stderr && !stderr.includes('WARNING')) {
                 logger.error('IaC scan error:', stderr);
                 return { success: false, error: stderr };
             }
-            
+
             const results = JSON.parse(stdout);
             this.scanResults.push({
                 type: 'iac',
@@ -109,7 +132,7 @@ class SnykService {
                 timestamp: new Date().toISOString(),
                 results
             });
-            
+
             return {
                 success: true,
                 data: results,
@@ -125,13 +148,13 @@ class SnykService {
         try {
             const safePath = this._sanitizePath(inputPath);
             const command = `snyk code test ${safePath} --severity-threshold=high --json`;
-            const { stdout, stderr } = await execAsync(command);
-            
+            const { stdout, stderr } = await runSnykCommand(command);
+
             if (stderr && !stderr.includes('WARNING')) {
                 logger.error('Code scan error:', stderr);
                 return { success: false, error: stderr };
             }
-            
+
             const results = JSON.parse(stdout);
             this.scanResults.push({
                 type: 'code',
@@ -139,7 +162,7 @@ class SnykService {
                 timestamp: new Date().toISOString(),
                 results
             });
-            
+
             return {
                 success: true,
                 data: results,
