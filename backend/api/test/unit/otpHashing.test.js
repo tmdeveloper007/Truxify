@@ -134,3 +134,31 @@ describe('constantTimeEqualHex', () => {
   it('invalid hex', () => { expect(constantTimeEqualHex('xyz', 'xyz')).toBe(false); });
 });
 
+
+
+  describe('constantTimeEqualHex', () => {
+    it('returns true for matching hex strings of same length', () => {
+      expect(constantTimeEqualHex('aabbcc', 'aabbcc')).toBe(true);
+      expect(constantTimeEqualHex('deadbeef123456', 'deadbeef123456')).toBe(true);
+    });
+
+    it('returns false for non-matching hex strings', () => {
+      expect(constantTimeEqualHex('aabbcc', 'aabbcd')).toBe(false);
+      expect(constantTimeEqualHex('123456', 'abcdef')).toBe(false);
+    });
+
+    it('returns false for strings of different lengths', () => {
+      expect(constantTimeEqualHex('aabbcc', 'aabbccdd')).toBe(false);
+    });
+
+    it('returns false for non-string inputs', () => {
+      expect(constantTimeEqualHex(null, 'aabbcc')).toBe(false);
+      expect(constantTimeEqualHex('aabbcc', undefined)).toBe(false);
+      expect(constantTimeEqualHex(123, 'aabbcc')).toBe(false);
+    });
+
+    it('handles empty strings', () => {
+      expect(constantTimeEqualHex('', '')).toBe(true);
+      expect(constantTimeEqualHex('', 'aabbcc')).toBe(false);
+    });
+  });
