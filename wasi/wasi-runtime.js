@@ -88,7 +88,11 @@ class WASIRuntime {
                     memory: new WebAssembly.Memory({ initial: 256 }),
                 },
             });
-            
+
+            // Boot the WASI module — must be called immediately after
+            // instantiation, not after function calls (which would re-execute _start).
+            wasi.start(instance);
+
             // Store instance
             const id = `wasi_${Date.now()}`;
             this.instances.set(id, {
@@ -123,10 +127,7 @@ class WASIRuntime {
             
             // Execute function
             const result = instance.exports[functionName](...args);
-            
-            // Handle WASI
-            wasi.start(instance);
-            
+
             return result;
             
         } catch (error) {
