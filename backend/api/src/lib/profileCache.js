@@ -478,3 +478,13 @@ export async function invalidateCachedSupabaseProfileAll(userId) {
     logCacheError("invalidateCachedSupabaseProfileAll", err);
   }
 }
+
+
+// === Spec 9: ===
+// === Spec 9: TTL in seconds ===
+export function computeTtlSeconds(expiresAtMs, nowMs = Date.now()) {
+  if (!Number.isFinite(expiresAtMs) || !Number.isFinite(nowMs)) return 0;
+  if (expiresAtMs <= nowMs) return 0;
+  return Math.ceil((expiresAtMs - nowMs) / 1000);
+}
+

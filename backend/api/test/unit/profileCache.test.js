@@ -34,3 +34,14 @@ describe('profileCache stats', () => {
     });
   });
 });
+
+
+// === Spec 9 test ===
+import { describe, it, expect } from 'vitest';
+import { computeTtlSeconds } from '../../src/lib/profileCache.js';
+describe('computeTtlSeconds', () => {
+  it('past → 0', () => { expect(computeTtlSeconds(1000, 2000)).toBe(0); });
+  it('60s future → 60', () => { expect(computeTtlSeconds(60_000, 0)).toBe(60); });
+  it('rounds up', () => { expect(computeTtlSeconds(1500, 0)).toBe(2); });
+});
+
