@@ -167,6 +167,7 @@ class _BookingConfirmationScreenState extends State<BookingConfirmationScreen>
         pickupLng: widget.draft.pickupLng!,
         dropLat: finalDropLat,
         dropLng: finalDropLng,
+        pickupDate: widget.draft.pickupDate,
         pickupTime: widget.draft.dateLabel,
         pickupDate: widget.draft.pickupDate,
         goodsType: widget.draft.goodsType + (_isPassengerMode ? ' + Passenger' : ''),
