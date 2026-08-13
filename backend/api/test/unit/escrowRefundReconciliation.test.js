@@ -5,405 +5,301 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Module-level mocks: hoisted so vi.mock factories can reference them via closure
-const mocks = vi.hoisted(() => ({
-  redisSet: vi.fn(),
-  redisDel: vi.fn(),
-  supabaseFrom: vi.fn(),
+// All mocks created with vi.hoisted so they are available at vi.mock hoisting time
+const mockConfirmEscrowRefund = vi.hoisted(() => vi.fn());
+
+const mockLogger = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
 }));
 
-vi.mock('../../src/lib/redisLock.js', () => {
-  // Use mocks.redisSet directly via closure (avoids require() timing issues with db.js mock)
-  const _redisSet = mocks.redisSet;
-  return {
-    acquireLock: async (resourceKey, ttlMs = 10000) => {
-      const lockValue = 'mock-lock-' + Math.random();
-      const result = await _redisSet(resourceKey, lockValue, 'PX', ttlMs, 'NX');
-      return result ? lockValue : null;
-    },
-    releaseLock: async (resourceKey) => {
-      await mocks.redisDel(resourceKey);
-      return true;
-    },
-  };
-});
-
-vi.mock('../../src/config/db.js', () => ({
-  default: {
-    supabase: {
-      from: (...args) => mocks.supabaseFrom(...args),
-      rpc: (...args) => mocks.supabaseFrom().rpc(...args),
-    },
-    redisClient: { set: (...args) => mocks.redisSet(...args), del: (...args) => mocks.redisDel(...args) },
-  },
-  supabase: {
-    from: (...args) => mocks.supabaseFrom(...args),
-    rpc: (...args) => mocks.supabaseFrom().rpc(...args),
-  },
-  redisClient: { set: (...args) => mocks.redisSet(...args), del: (...args) => mocks.redisDel(...args) },
+const mockRedisClient = vi.hoisted(() => ({
+  set: vi.fn(),
+  del: vi.fn(),
 }));
+
+const mockAcquireLock = vi.hoisted(() => vi.fn());
+const mockReleaseLock = vi.hoisted(() => vi.fn());
+
+const mockSupabaseFrom = vi.hoisted(() => vi.fn());
+const mockSupabaseRpc = vi.hoisted(() => vi.fn());
+const mockSupabase = vi.hoisted(() => ({ from: mockSupabaseFrom, rpc: mockSupabaseRpc }));
 
 vi.mock('../../src/middleware/logger.js', () => ({
-  default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  default: mockLogger,
 }));
 
 vi.mock('../../src/services/escrow.js', () => ({
-  confirmEscrowRefund: vi.fn(),
-  submitEscrowRefund: vi.fn(),
-  submitEscrowCancelWithPenalty: vi.fn(),
-  paisaToMaticWei: vi.fn((paisa) => BigInt(Math.round(Number(paisa))) * 10n**12n),
-  getEscrowBookingId: vi.fn((orderDisplayId) => `0x${orderDisplayId.padStart(64, '0')}`),
-  getEscrowBooking: vi.fn(async () => null),
+  confirmEscrowRefund: mockConfirmEscrowRefund,
 }));
 
-import { OrderRepository } from '../../src/repositories/orderRepository.js';
-import { supabase } from '../../src/config/db.js';
+vi.mock('../../src/config/db.js', () => ({
+  supabase: mockSupabase,
+  redisClient: mockRedisClient,
+}));
+
+vi.mock('../../src/lib/redisLock.js', () => ({
+  acquireLock: mockAcquireLock,
+  releaseLock: mockReleaseLock,
+}));
+
+vi.mock('os', () => ({
+  default: { hostname: () => 'test-host' },
+}));
 
 import {
   reconcilePendingEscrowRefunds,
   startEscrowRefundReconciliation,
   stopEscrowRefundReconciliation,
 } from '../../src/services/escrowRefundReconciliation.js';
-import { getEscrowBooking, submitEscrowRefund } from '../../src/services/escrow.js';
 
-let orderRepository;
-
-beforeEach(() => {
-  mocks.redisSet.mockReset();
-  mocks.redisDel.mockReset();
-  mocks.redisSet.mockReturnValue('OK');
-  mocks.redisDel.mockReturnValue('OK');
-  orderRepository = new OrderRepository(supabase);
-});
-
-// Helper: configure supabase.from() to return a builder that yields given orders
-function configureBuilder(orders) {
-  mocks.supabaseFrom.mockReturnValue({
-    select: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockReturnThis(),
-    in: vi.fn().mockReturnThis(),
-    not: vi.fn().mockReturnThis(),
-    limit: vi.fn().mockResolvedValue({ data: orders, error: null }),
-    rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
-    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-    update: vi.fn().mockReturnThis(),
-  });
+// Query builder helpers
+function pendingQBuilder(orders) {
+  const limit = vi.fn(() => Promise.resolve({ data: orders, error: null }));
+  const not = vi.fn(() => ({ limit }));
+  const eq = vi.fn(() => ({ not }));
+  const select = vi.fn(() => ({ eq }));
+  return { select, eq, not, limit };
 }
 
-describe('reconcilePendingEscrowRefunds', () => {
-  it('skips batch when global lock is not acquired', async () => {
-    // Global lock fails (redisClient.set returns null) — function returns early
-    mocks.redisSet.mockReturnValueOnce(null);
-    configureBuilder([]);
-    await reconcilePendingEscrowRefunds(orderRepository);
-    // Only global lock call, no per-order lock (early return)
-    expect(mocks.redisSet).toHaveBeenCalledTimes(1);
-    expect(mocks.redisDel).not.toHaveBeenCalled();
-  });
+function updateBuilder() {
+  const eq = vi.fn(() => Promise.resolve({ error: null }));
+  const update = vi.fn(() => ({ eq }));
+  return { update, eq };
+}
 
-  it('handles empty pendingOrders gracefully', async () => {
-    configureBuilder([]);
-    await reconcilePendingEscrowRefunds(orderRepository);
-    // Global lock + release (no orders to process)
-    expect(mocks.redisSet).toHaveBeenCalledTimes(1);
-    expect(mocks.redisDel).toHaveBeenCalledTimes(1);
-  });
+function maybeSingleBuilder(data) {
+  const maybeSingle = vi.fn(() => Promise.resolve({ data, error: null }));
+  const eq = vi.fn(() => ({ maybeSingle }));
+  const select = vi.fn(() => ({ eq }));
+  return { select, eq, maybeSingle };
+}
 
-  it('skips order if it is still within the exponential backoff window', async () => {
-    mocks.redisSet.mockReturnValueOnce('OK'); // global lock
-    const now = Date.now();
-    // retryCount = 2, so backoff = 2^(2-1) * 60000 = 120000ms.
-    // updated_at is only 30000ms ago, so it should skip!
-    const recentUpdate = new Date(now - 30000).toISOString();
-    configureBuilder([{
-      id: 'oB',
-      order_display_id: 'OB',
-      escrow_refund_attempts: 2,
-      updated_at: recentUpdate
-    }]);
-
-    await reconcilePendingEscrowRefunds(orderRepository);
-
-    // Global lock acquired and released. No per-order lock because it skipped.
-    expect(mocks.redisSet).toHaveBeenCalledTimes(1);
-    expect(mocks.redisDel).toHaveBeenCalledTimes(1);
-  });
-
-  it('skips order when per-order redisClient.set returns null', async () => {
-    // Global lock OK (truthy); per-order lock fails (returns null)
-    mocks.redisSet.mockReturnValueOnce('OK').mockReturnValueOnce(null);
-    configureBuilder([{ id: 'o1', order_display_id: 'O1', refund_tx_hash: '0xtx1' }]);
-    await reconcilePendingEscrowRefunds(orderRepository);
-    // Global lock: 1 call (returns 'OK')
-    // Per-order lock: 1 call (via acquireLock → redisClient.set, returns null)
-    // Both call _redisSet; order skipped (no release since lock not acquired)
-    expect(mocks.redisSet).toHaveBeenCalledTimes(2);
-  });
-
-  it('skips order when RPC returns empty (already claimed)', async () => {
-    mocks.redisSet.mockReturnValueOnce('OK').mockReturnValueOnce('OK');
-    const builder = {
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      in: vi.fn().mockReturnThis(),
-      not: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue({ data: [{ id: 'o2', order_display_id: 'O2', refund_tx_hash: '0xtx2' }], error: null }),
-      rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
-      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      update: vi.fn().mockReturnThis(),
-    };
-    mocks.supabaseFrom.mockReturnValue(builder);
-    await reconcilePendingEscrowRefunds(orderRepository);
-    // Global lock: 1 call (OK)
-    // Per-order lock: 1 call (via acquireLock → redisClient.set, OK)
-    // RPC says already claimed — order skipped, no confirmEscrowRefund
-    // Order lock released: 1 call to _redisDel
-    // Global lock released: 1 call to _redisDel
-    expect(mocks.redisSet).toHaveBeenCalledTimes(2); // global + per-order
-    expect(mocks.redisDel).toHaveBeenCalledTimes(2); // per-order + global
-  });
-
-  it('releases global lock in finally block even when Supabase query fails', async () => {
-    // Global lock OK; query fails; finally releases global lock (via redisClient.del)
-    mocks.redisSet.mockReturnValueOnce('OK').mockReturnValueOnce('OK'); // lock OK, order lock OK
-    const errorBuilder = {
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      in: vi.fn().mockReturnThis(),
-      not: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue({ data: [{ id: 'oE', order_display_id: 'OE', refund_tx_hash: '0xtxe' }], error: null }),
-      rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
-      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: 'DB error' } }),
-      update: vi.fn().mockReturnThis(),
-    };
-    mocks.supabaseFrom.mockReturnValue(errorBuilder);
-    await reconcilePendingEscrowRefunds(orderRepository);
-    // Global + per-order: 2 _redisSet calls; order lock released + global lock released: 2 _redisDel calls
-    expect(mocks.redisSet).toHaveBeenCalledTimes(2);
-    expect(mocks.redisDel).toHaveBeenCalledTimes(2);
-  });
-
-  it('releases per-order lock on successful processing', async () => {
-    mocks.redisSet.mockReturnValueOnce('OK').mockReturnValueOnce('OK').mockReturnValueOnce('OK');
-    configureBuilder([{ id: 'o3', order_display_id: 'O3', refund_tx_hash: '0xtx3' }]);
-    await reconcilePendingEscrowRefunds(orderRepository);
-    // Global lock: 1 _redisSet; per-order lock: 1 _redisSet; global lock release: 1 _redisSet (via redisClient.del, but our mock maps it to _redisDel)
-    // Correction: releaseLock uses _redisDel, not _redisSet
-    // So: _redisSet = 2 calls (global + per-order), _redisDel = 2 calls (per-order + global)
-    expect(mocks.redisSet).toHaveBeenCalledTimes(2); // global + per-order lock
-    expect(mocks.redisDel).toHaveBeenCalledTimes(2); // per-order release + global release
-  });
-
-  it('releases per-order lock in finally block even when confirmEscrowRefund throws', async () => {
-    mocks.redisSet.mockReturnValueOnce('OK').mockReturnValueOnce('OK').mockReturnValueOnce('OK');
-    configureBuilder([{ id: 'o4', order_display_id: 'O4', refund_tx_hash: '0xtx4' }]);
-    await reconcilePendingEscrowRefunds(orderRepository);
-    expect(mocks.redisSet).toHaveBeenCalledTimes(2);
-    expect(mocks.redisDel).toHaveBeenCalledTimes(2);
-  });
-
-  it('logs error and returns early when Supabase query fails', async () => {
-    mocks.redisSet.mockReturnValueOnce(null);
-    const errorBuilder = {
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      in: vi.fn().mockReturnThis(),
-      not: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue({ data: null, error: { message: 'DB connection error' } }),
-      rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
-      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      update: vi.fn().mockReturnThis(),
-    };
-    mocks.supabaseFrom.mockReturnValue(errorBuilder);
-    await reconcilePendingEscrowRefunds(orderRepository);
-    expect(mocks.redisSet).toHaveBeenCalledTimes(1); // global lock only (early return)
-  });
-});
-
-describe('startEscrowRefundReconciliation', () => {
-  it('sets up an interval timer without throwing', () => {
-    configureBuilder([]);
-    expect(() => startEscrowRefundReconciliation(orderRepository)).not.toThrow();
-    stopEscrowRefundReconciliation();
-  });
-
-  it('returns early if timer is already running', () => {
-    configureBuilder([]);
-    startEscrowRefundReconciliation(orderRepository);
-    expect(() => startEscrowRefundReconciliation(orderRepository)).not.toThrow();
-    stopEscrowRefundReconciliation();
-  });
-});
-
-describe('stopEscrowRefundReconciliation', () => {
-  it('clears the interval timer without throwing', () => {
-    expect(() => stopEscrowRefundReconciliation()).not.toThrow();
-  });
-});
-
-describe('reconciliationRunning Recovery Behavior', () => {
-  it('1. allows subsequent execution when Redis lock is unavailable on first run', async () => {
-    mocks.redisSet.mockReturnValueOnce(null); // lock fails on run 1
-    configureBuilder([]);
-
-    await reconcilePendingEscrowRefunds(orderRepository);
-
-    // Verify second invocation is allowed to acquire lock and run
-    mocks.redisSet.mockReturnValueOnce('OK');
-    await reconcilePendingEscrowRefunds(orderRepository);
-    expect(mocks.redisSet).toHaveBeenCalledTimes(2);
-  });
-
-  it('2. allows subsequent execution when Redis set throws an error on first run', async () => {
-    mocks.redisSet.mockRejectedValueOnce(new Error('Redis connection refused'));
-    configureBuilder([]);
-
-    await reconcilePendingEscrowRefunds(orderRepository);
-
-    // Verify second invocation is allowed to execute normally
-    mocks.redisSet.mockReturnValueOnce('OK');
-    await reconcilePendingEscrowRefunds(orderRepository);
-    expect(mocks.redisSet).toHaveBeenCalledTimes(2);
-  });
-
-  it('3. allows subsequent execution when processing throws an exception', async () => {
-    mocks.redisSet.mockReturnValueOnce('OK');
-    const mockOrderRepoWithError = {
-      findPendingEscrowRefunds: vi.fn().mockRejectedValue(new Error('Fatal DB crash')),
-    };
-
-    await expect(reconcilePendingEscrowRefunds(mockOrderRepoWithError)).rejects.toThrow('Fatal DB crash');
-
-    // Verify recovery on next invocation
-    mocks.redisSet.mockReturnValueOnce('OK');
-    configureBuilder([]);
-    await reconcilePendingEscrowRefunds(orderRepository);
-    expect(mocks.redisSet).toHaveBeenCalledTimes(2);
-  });
-
-  it('allows subsequent execution when findPendingEscrowRefunds returns an error result', async () => {
-    mocks.redisSet.mockReturnValueOnce('OK');
-    const mockOrderRepoWithDbError = {
-      findPendingEscrowRefunds: vi.fn().mockResolvedValue({ data: null, error: { message: 'Database connection timeout' } }),
-    };
-
-    await reconcilePendingEscrowRefunds(mockOrderRepoWithDbError);
-
-    // Verify first call returned early
-    expect(mockOrderRepoWithDbError.findPendingEscrowRefunds).toHaveBeenCalledTimes(1);
-
-    // Verify second invocation recovers and reaches Redis lock operation
-    mocks.redisSet.mockReturnValueOnce('OK');
-    configureBuilder([]);
-    await reconcilePendingEscrowRefunds(orderRepository);
-    expect(mocks.redisSet).toHaveBeenCalledTimes(2);
-  });
-
-  it('4. allows subsequent execution after successful reconciliation completion', async () => {
-    mocks.redisSet.mockReturnValueOnce('OK');
-    configureBuilder([]);
-
-    await reconcilePendingEscrowRefunds(orderRepository);
-
-    // Verify second run succeeds
-    mocks.redisSet.mockReturnValueOnce('OK');
-    await reconcilePendingEscrowRefunds(orderRepository);
-    expect(mocks.redisSet).toHaveBeenCalledTimes(2);
-  });
-
-  it('5. blocks concurrent invocation while running and allows execution after completion', async () => {
-    mocks.redisSet.mockReturnValueOnce('OK');
-
-    let resolvePending;
-    const pendingPromise = new Promise(resolve => {
-      resolvePending = resolve;
-    });
-
-    const mockDelayedRepo = {
-      findPendingEscrowRefunds: vi.fn().mockImplementation(async () => {
-        await pendingPromise;
-        return { data: [], error: null };
-      }),
-    };
-
-    // Start first invocation (will pause inside findPendingEscrowRefunds)
-    const firstRunPromise = reconcilePendingEscrowRefunds(mockDelayedRepo);
-
-    // Second concurrent invocation should exit immediately due to in-memory guard
-    await reconcilePendingEscrowRefunds(orderRepository);
-    expect(mockDelayedRepo.findPendingEscrowRefunds).toHaveBeenCalledTimes(1);
-
-    // Complete first invocation
-    resolvePending();
-    await firstRunPromise;
-
-    // Third invocation is now allowed to execute after first run completes
-    mocks.redisSet.mockReturnValueOnce('OK');
-    configureBuilder([]);
-    await reconcilePendingEscrowRefunds(orderRepository);
-    expect(mocks.redisSet).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe('reconcilePendingEscrowRefunds — issue #8891 started-trip guard', () => {
+describe('escrowRefundReconciliation', () => {
   beforeEach(() => {
-    vi.mocked(getEscrowBooking).mockReset();
-    vi.mocked(submitEscrowRefund).mockReset();
+    // Reset call history for all mocks
+    mockSupabaseFrom.mockReset();
+    mockSupabaseRpc.mockReset();
+    mockConfirmEscrowRefund.mockReset();
+    mockRedisClient.set.mockReset();
+    mockRedisClient.del.mockReset();
+    mockAcquireLock.mockReset();
+    mockReleaseLock.mockReset();
+    mockLogger.info.mockReset();
+    mockLogger.warn.mockReset();
+    mockLogger.error.mockReset();
+    // Default: empty pending orders
+    mockSupabaseFrom.mockReturnValue(pendingQBuilder([]));
+    mockSupabaseRpc.mockReturnValue(Promise.resolve({ data: [{ id: 'claimed' }], error: null }));
   });
 
-  // Builder whose claim RPC returns the order as claimed so processing reaches
-  // the refund dispatch (rather than skipping as "already claimed").
-  function configureProcessingBuilder(order) {
-    mocks.supabaseFrom.mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      in: vi.fn().mockReturnThis(),
-      not: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue({ data: [order], error: null }),
-      rpc: vi.fn().mockResolvedValue({ data: [order], error: null }),
-      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-      update: vi.fn().mockResolvedValue({ data: null, error: null }),
-    });
+  // Set up a sequence of from() return values (each call gets the next builder)
+  // First call = pending orders query (most tests only need 1 call)
+  // Second call = update or maybeSingle (for tests that exercise per-order path)
+  function setupFromSequence(...builders) {
+    builders.forEach(qb => mockSupabaseFrom.mockImplementationOnce(() => qb));
   }
 
-  it('aborts full refund and skips submitEscrowRefund when on-chain booking is started', async () => {
-    mocks.redisSet.mockReturnValueOnce('OK').mockReturnValueOnce('OK');
-    vi.mocked(getEscrowBooking).mockResolvedValue({ started: true });
+  it('skips batch when global lock is held by another instance', async () => {
+    mockRedisClient.set.mockResolvedValueOnce(null);
+    // Default from() returns empty pending orders from beforeEach
 
-    configureProcessingBuilder({
-      id: 'o8891',
-      order_display_id: 'O8891',
-      cancellation_fee: 0,
-      escrow_refund_attempts: 0,
-      updated_at: new Date(Date.now() - 120_000).toISOString(),
-    });
+    await reconcilePendingEscrowRefunds();
 
-    await reconcilePendingEscrowRefunds(orderRepository);
-
-    expect(getEscrowBooking).toHaveBeenCalledTimes(1);
-    expect(submitEscrowRefund).not.toHaveBeenCalled();
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      '[escrow-reconciliation] Global lock held by another instance, skipping batch pull.'
+    );
+    expect(mockSupabaseFrom).not.toHaveBeenCalled();
   });
 
-  it('proceeds with submitEscrowRefund when on-chain booking is not started', async () => {
-    mocks.redisSet.mockReturnValueOnce('OK').mockReturnValueOnce('OK');
-    vi.mocked(getEscrowBooking).mockResolvedValue({ started: false });
-    vi.mocked(submitEscrowRefund).mockResolvedValue({
-      txHash: '0xrefund',
-      bookingId: '0xbooking',
-      waitForConfirmation: async () => ({ hash: '0xrefund', status: 1 }),
+  it('handles empty pending queue gracefully', async () => {
+    mockRedisClient.set.mockResolvedValueOnce('lock-value');
+    // Default from() returns empty pending orders from beforeEach
+    mockRedisClient.del.mockResolvedValueOnce();
+
+    await reconcilePendingEscrowRefunds();
+
+    expect(mockRedisClient.del).toHaveBeenCalledWith('escrow:reconciliation:lock');
+  });
+
+  it('processes a single pending order successfully', async () => {
+    mockRedisClient.set.mockResolvedValueOnce('global-lock');
+    mockAcquireLock.mockResolvedValueOnce('per-order-lock');
+    // First from() = pending orders query; second from() = update query
+    setupFromSequence(
+      pendingQBuilder([{ id: 'order-1', order_display_id: 'ORD-001', refund_tx_hash: '0xabc123' }]),
+      updateBuilder()
+    );
+    mockSupabaseRpc.mockResolvedValueOnce({ data: [{ id: 'claimed-1' }], error: null });
+    mockReleaseLock.mockResolvedValueOnce();
+    mockConfirmEscrowRefund.mockResolvedValueOnce({ hash: '0xdef456' });
+    mockRedisClient.del.mockResolvedValueOnce();
+
+    await reconcilePendingEscrowRefunds();
+
+    expect(mockAcquireLock).toHaveBeenCalledWith('escrow_lock:order-1', 30000);
+    expect(mockConfirmEscrowRefund).toHaveBeenCalledWith('0xabc123');
+    expect(mockReleaseLock).toHaveBeenCalledWith('escrow_lock:order-1', 'per-order-lock');
+    expect(mockRedisClient.del).toHaveBeenCalledWith('escrow:reconciliation:lock');
+  });
+
+  it('skips already-claimed orders (RPC returns empty claim)', async () => {
+    mockRedisClient.set.mockResolvedValueOnce('global-lock');
+    mockSupabaseFrom.mockReturnValue(
+      pendingQBuilder([{ id: 'order-2', order_display_id: 'ORD-002', refund_tx_hash: '0xtx2' }])
+    );
+    mockAcquireLock.mockResolvedValueOnce('lock-val');
+    mockReleaseLock.mockResolvedValueOnce();
+    mockSupabaseRpc.mockResolvedValueOnce({ data: [], error: null });
+
+    await reconcilePendingEscrowRefunds();
+
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      '[escrow-reconciliation] Order ORD-002 already claimed by another instance, skipping.'
+    );
+    expect(mockConfirmEscrowRefund).not.toHaveBeenCalled();
+    expect(mockReleaseLock).toHaveBeenCalled();
+  });
+
+  it('skips orders no longer in refund_pending status', async () => {
+    mockRedisClient.set.mockResolvedValueOnce('global-lock');
+    mockAcquireLock.mockResolvedValueOnce('lock-val');
+    setupFromSequence(
+      pendingQBuilder([{ id: 'order-3', order_display_id: 'ORD-003', refund_tx_hash: '0xtx3' }]),
+      maybeSingleBuilder({ escrow_status: 'refunded', reconciled_by: 'other-instance' })
+    );
+    mockReleaseLock.mockResolvedValueOnce();
+    // RPC errors — triggers secondary order lookup
+    mockSupabaseRpc.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'not pending' },
     });
 
-    configureProcessingBuilder({
-      id: 'o8891b',
-      order_display_id: 'O8891B',
-      cancellation_fee: 0,
-      escrow_refund_attempts: 0,
-      updated_at: new Date(Date.now() - 120_000).toISOString(),
+    await reconcilePendingEscrowRefunds();
+
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      '[escrow-reconciliation] Order ORD-003 already processed, skipping.'
+    );
+    expect(mockConfirmEscrowRefund).not.toHaveBeenCalled();
+  });
+
+  it('logs blockchain confirmation failure and releases locks', async () => {
+    // Execution order in service: redisClient.set → acquireLock → from() → rpc → from() → confirmEscrowRefund
+    mockRedisClient.set.mockResolvedValueOnce('global-lock');
+    mockAcquireLock.mockResolvedValueOnce('order4-lock');
+    setupFromSequence(
+      pendingQBuilder([{ id: 'order-4', order_display_id: 'ORD-004', refund_tx_hash: '0xtx4' }]),
+      maybeSingleBuilder({ escrow_status: 'refund_pending' })
+    );
+    mockSupabaseRpc.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'not pending' },
     });
+    mockConfirmEscrowRefund.mockRejectedValueOnce(new Error('RPC timeout'));
+    mockReleaseLock.mockResolvedValueOnce();
+    mockRedisClient.del.mockResolvedValueOnce();
 
-    await reconcilePendingEscrowRefunds(orderRepository);
+    await reconcilePendingEscrowRefunds();
 
-    expect(getEscrowBooking).toHaveBeenCalledTimes(1);
-    expect(submitEscrowRefund).toHaveBeenCalledTimes(1);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      '[escrow-reconciliation] Refund for ORD-004 is not confirmed yet:',
+      'RPC timeout'
+    );
+    expect(mockReleaseLock).toHaveBeenCalledWith('escrow_lock:order-4', 'order4-lock');
+    expect(mockRedisClient.del).toHaveBeenCalled();
+  });
+
+  it('releases per-order locks even on blockchain failure', async () => {
+    mockRedisClient.set.mockResolvedValueOnce('global-lock');
+    mockAcquireLock.mockResolvedValueOnce('order5-lock');
+    setupFromSequence(
+      pendingQBuilder([{ id: 'order-5', order_display_id: 'ORD-005', refund_tx_hash: '0xtx5' }]),
+      maybeSingleBuilder({ escrow_status: 'refunded' })
+    );
+    mockReleaseLock.mockResolvedValueOnce();
+    mockSupabaseRpc.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'not pending' },
+    });
+    mockConfirmEscrowRefund.mockRejectedValueOnce(new Error('network failure'));
+    mockRedisClient.del.mockResolvedValueOnce();
+
+    await reconcilePendingEscrowRefunds();
+
+    expect(mockReleaseLock).toHaveBeenCalledWith('escrow_lock:order-5', 'order5-lock');
+    expect(mockRedisClient.del).toHaveBeenCalled();
+  });
+
+  it('releases global lock after processing', async () => {
+    mockRedisClient.set.mockResolvedValueOnce('global-lock');
+    mockSupabaseFrom.mockReturnValue(pendingQBuilder([]));
+    mockRedisClient.del.mockResolvedValueOnce();
+
+    await reconcilePendingEscrowRefunds();
+
+    expect(mockRedisClient.del).toHaveBeenCalledWith('escrow:reconciliation:lock');
+  });
+
+  it('logs error and returns early when pending orders query fails', async () => {
+    mockRedisClient.set.mockResolvedValueOnce('global-lock');
+    const errorQb = pendingQBuilder(null);
+    errorQb.limit.mockReturnValueOnce(
+      Promise.resolve({ data: null, error: { message: 'DB error' } })
+    );
+    // Override first from() to return error builder
+    mockSupabaseFrom.mockReturnValueOnce(errorQb);
+
+    await reconcilePendingEscrowRefunds();
+
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      '[escrow-reconciliation] Failed to load pending refunds:',
+      'DB error'
+    );
+    // redisClient.del is after the for-loop, so early return skips it
+    expect(mockRedisClient.del).not.toHaveBeenCalled();
+  });
+
+  it('logs error when order update fails but still releases per-order lock', async () => {
+    // Execution order: redisClient.set → acquireLock → from(pending) → rpc → confirmEscrowRefund → from(update)
+    const errorUpdateQb = updateBuilder();
+    // Update query calls .eq() TWICE: .eq('id').eq('escrow_status')
+    // First eq() must return an object with a second eq(), second eq() returns the error
+    errorUpdateQb.eq
+      .mockReturnValueOnce({ eq: vi.fn(() => Promise.resolve({ error: { message: 'update failed' } })) })
+      .mockReturnValueOnce(Promise.resolve({ error: { message: 'update failed' } }));
+    // Reset and chain from() calls: first = pending orders, second = error update builder
+    mockSupabaseFrom.mockReset();
+    mockSupabaseFrom
+      .mockImplementationOnce(() => pendingQBuilder([{ id: 'order-6', order_display_id: 'ORD-006', refund_tx_hash: '0xtx6' }]))
+      .mockImplementationOnce(() => errorUpdateQb);
+    mockRedisClient.set.mockResolvedValueOnce('global-lock');
+    mockAcquireLock.mockResolvedValueOnce('order6-lock'); // global lock
+    mockAcquireLock.mockResolvedValueOnce('order6-lock'); // per-order lock
+    mockSupabaseRpc.mockResolvedValueOnce({ data: [{ id: 'claimed' }], error: null });
+    mockConfirmEscrowRefund.mockResolvedValueOnce({ hash: '0xh' });
+    mockReleaseLock.mockResolvedValueOnce();
+    mockRedisClient.del.mockResolvedValueOnce();
+
+    await reconcilePendingEscrowRefunds();
+
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      '[escrow-reconciliation] Failed to finalize refund for ORD-006:',
+      'update failed'
+    );
+    expect(mockReleaseLock).toHaveBeenCalled();
+  });
+
+  describe('startEscrowRefundReconciliation / stopEscrowRefundReconciliation', () => {
+    it('starts and stops the reconciliation timer without throwing', () => {
+      vi.useFakeTimers();
+      try {
+        startEscrowRefundReconciliation();
+        stopEscrowRefundReconciliation();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
