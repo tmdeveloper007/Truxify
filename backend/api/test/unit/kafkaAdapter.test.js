@@ -80,4 +80,29 @@ describe('KafkaAdapter', () => {
       await expect(adapter.publish({ eventType: 'a', payload: {} })).rejects.toThrow('pub-fail');
     });
   });
+
+  describe('publishBatch', () => {
+    it('publishes multiple events in batch', async () => {
+      const publishBatch = vi.fn().mockResolvedValue();
+      adapter._kafkaConfig.publishBatch = publishBatch;
+      adapter._connected = true;
+      await adapter.publishBatch([
+        { eventType: 'order.created', payload: { id: 1 } },
+        { eventType: 'order.updated', payload: { id: 2 } },
+      ]);
+      expect(publishBatch).toHaveBeenCalledTimes(1);
+      const messages = publishBatch.mock.calls[0][0];
+      expect(messages.length).toBe(2);
+    });
+
+    it('rethrows batch publish errors', async () => {
+      adapter._kafkaConfig.publishBatch = vi.fn().mockRejectedValue(new Error('batch-fail'));
+      adapter._connected = true;
+      await expect(
+        adapter.publishBatch([
+          { eventType: 'order.created', payload: {} },
+        ]),
+      ).rejects.toThrow('batch-fail');
+    });
+  });
 });
