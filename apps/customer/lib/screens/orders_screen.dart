@@ -437,6 +437,9 @@ class _OrdersScreenState extends State<OrdersScreen>
       final dateB = DateTime.tryParse(b.date) ?? DateTime(1970);
       if (_selectedSort == 'Oldest') {
         return dateA.compareTo(dateB);
+      } else {
+        // Default 'Newest'
+        return dateB.compareTo(dateA);
       }
       // Default 'Newest'
       return dateB.compareTo(dateA);
