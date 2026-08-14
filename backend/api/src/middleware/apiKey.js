@@ -41,3 +41,7 @@ export const requireApiKey = (req, res, next) => {
 
   next();
 };
+
+// Note: Query string API keys (?api_key=...) are intentionally not accepted.
+// Passing credentials in URLs exposes them in logs, browser history, and proxies.
+// Only x-api-key header is supported.
