@@ -10,6 +10,16 @@ const MAX_RETRIES = parseInt(process.env.OUTBOX_MAX_RETRIES, 10) || 5;
 let _relayTimer = null;
 let _running = false;
 
+/**
+ * Outbox relay worker — publishes pending events via EventBus.
+ *
+ * emitSafe contract:
+ * - Returns a boolean (not a Promise) when no listeners are registered.
+ * - Returns a Promise<boolean> when listeners exist.
+ * - Awaits emitSafe here to handle both cases (Promise is a no-op for booleans).
+ * - emitSafe never throws — all listener errors are caught internally.
+ * - The outcome object from publishAndReport() is the authoritative delivery signal.
+ */
 async function relayOnce() {
   if (_running) return;
   _running = true;
