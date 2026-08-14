@@ -40,6 +40,16 @@ class _SettlementWalletScreenState extends State<SettlementWalletScreen> {
       return;
     }
 
+    // Enforce documented preconditions: GPS arrival AND PoD upload required before payout.
+    if (!contract.isGeofenceConfirmed || !contract.isPodUploaded) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('PoD upload and GPS arrival required before payout.'),
+        ),
+      );
+      return;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Verifying conditions and executing smart contract...')),
     );
@@ -52,15 +62,16 @@ class _SettlementWalletScreenState extends State<SettlementWalletScreen> {
         final index = _contracts.indexOf(contract);
         _contracts[index] = FreightSmartContract(
           contractId: contract.contractId,
+          contractAddress: contract.contractAddress,
           loadId: contract.loadId,
           brokerName: contract.brokerName,
           payoutAmount: contract.payoutAmount,
+          escrowAmount: contract.escrowAmount,
           isGeofenceConfirmed: true,
           isPodUploaded: true,
           status: 'RELEASED',
           walletAddress: contract.walletAddress,
           createdAt: contract.createdAt,
-          settledAt: DateTime.now(),
         );
       });
       ScaffoldMessenger.of(context).showSnackBar(
