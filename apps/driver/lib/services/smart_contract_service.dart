@@ -8,26 +8,30 @@ class SmartContractService {
     final now = DateTime.now();
     return [
       FreightSmartContract(
-        contractId: '0xabc123...',
+        contractId: '0xabc123',
+        contractAddress: '0xabc123...',
         loadId: 'L-5920-A',
-        brokerName: 'ACME Freight',
+        brokerName: 'Truxify Logistics',
         payoutAmount: 1850.00,
+        escrowAmount: 1850.00,
         isGeofenceConfirmed: true,
         isPodUploaded: false,
         status: 'ESCROW_FUNDED',
-        walletAddress: '0xabc123...',
-        createdAt: now.subtract(const Duration(days: 2)),
+        walletAddress: '0xDriverWallet',
+        createdAt: DateTime.now().subtract(const Duration(days: 2)),
       ),
       FreightSmartContract(
-        contractId: '0xdef456...',
+        contractId: '0xdef456',
+        contractAddress: '0xdef456...',
         loadId: 'L-5921-B',
-        brokerName: 'ACME Freight',
+        brokerName: 'Fast Freight Co',
         payoutAmount: 2400.00,
+        escrowAmount: 2400.00,
         isGeofenceConfirmed: true,
         isPodUploaded: true,
         status: 'RELEASED',
-        walletAddress: '0xdef456...',
-        createdAt: now.subtract(const Duration(days: 1)),
+        walletAddress: '0xDriverWallet',
+        createdAt: DateTime.now().subtract(const Duration(days: 1)),
       ),
     ];
   }
