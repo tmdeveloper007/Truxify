@@ -107,12 +107,14 @@ class TransactionMonitor {
       const result = await fn();
       const duration = Date.now() - startTime;
       if (duration > 100) {
-        logger.warn(`[TransactionMonitor] Slow query: ${duration}ms`, { query: query.substring(0, 100), duration });
+        const safeQuery = query != null ? query.substring(0, 100) : null;
+        logger.warn(`[TransactionMonitor] Slow query: ${duration}ms`, { query: safeQuery, duration });
         Sentry.addBreadcrumb({ category: 'database', message: `Slow query: ${duration}ms`, level: 'warning' });
       }
       return result;
     } catch (error) {
-      Sentry.captureException(error, { extra: { query: query.substring(0, 200) } });
+      const safeQuery = query != null ? query.substring(0, 200) : null;
+      Sentry.captureException(error, { extra: { query: safeQuery } });
       throw error;
     }
   }
